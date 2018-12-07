@@ -1,0 +1,5 @@
+raft*
+!raft.pro
+*.stash
+Makefile
+moc_*
