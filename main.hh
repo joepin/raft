@@ -7,9 +7,8 @@
 enum states {
     FOLLOWER,     /* Node is a follower                   */
     CANDIDATE,    /* Node is a candidate to become leader */
-    LEADER,       /* Node is the leader                   */
+    LEADER       /* Node is the leader                   */
 };
-
 
 class RaftNode {
   public:
