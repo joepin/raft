@@ -5,7 +5,10 @@
 
 RaftNode::RaftNode() {
   qDebug() << "Welcome from your new node!";
+  // initialize the node's term counter to 0
   current_term = 0;
+  // initialize the node to be a follower
+  current_state = FOLLOWER;
 }
 
 int main(int argc, char **argv) {
