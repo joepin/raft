@@ -1,0 +1,129 @@
+Main idea:
+- Each server has a state machine and a log. 
+- Traditionally, each state machine takes as input commands from its log. In our hash table example, the log would include commands like set x to 3.
+
+For the implementation:
+- What the user types does not need to appear in the chat window immediately — the message should only appear after the consensus with the other applications has been reached.
+- Consider exactly 5 participants that can communicate with each other (similarly to Lab 3, all apps run on the same host)
+- Don’t consider network splits and having two elected leaders
+- Print ALL Raft communication messages to each application (use large heartbeat and timeout values to keep it readable)
+- Don't put things in the chat window which aren't in the log
+- The Raft protocol considers only the leader that can accept user’s requests, however in your implementation you need to enable any node to accept new user messages, so it will look like a real chat.
+- The natural implementation would be for this node to just pass the message to the leader, and wait to receive a new communication from the leader with this message before adding it to its log. One of the downsides of this approach is that if the node loses communication with the leader, then it can’t receive new messages. Make sure that messages are not lost when there is no elected leader or the leader is unavailable, and that the application re-sends them after connectivity is restored.
+
+For the report:
+- Our goal is to always maintain and present the same sequence of messages that users type to their applications. Note, that we don’t solve race conditions, but rather focus on a consensus where all users will see messages in exactly the same order.Think why your implementation of Lab 3 cannot guarantee this and put this reasoning into your report.
+- Tell us about your implementation, current limitations, and what are other features of Raft or other protocols can help improve the distributed chat application
+
+Process:
+- All nodes start in the follower state. 
+- If followers don't hear from a leader, they become a candidate.
+- Candidate requests votes from other nodes. Nodes will reply with their vote.
+- The candidate becomes the leader if it gets votes from a majority of nodes. (Leader election.)
+- All changes to the system now go through the leader.
+	- Each change is added as an entry in the node's log. (From example: This log entry is currently uncommitted so it won't update the node's value.)
+	- To commit the entry the node first replicates it to the follower nodes.
+	- Then the leader waits until a majority of nodes have written the entry.
+	- The entry is now committed on the leader node and the node state is "5".
+	- The leader then notifies the followers that the entry is committed.
+	- The cluster has now come to consensus about the system state. (Log replication.)
+- 2 timeouts control elections:
+	- Election timeout 
+		- The amount of time a follower waits until becoming a candidate.
+		- The election timeout is randomized to be between 150ms and 300ms.
+		- After the election timeout:
+			- The follower becomes a candidate and starts a new election term.
+			- Votes for itself.
+			- And sends out Request Vote messages to other nodes.
+			- If the receiving node hasn't voted yet in this term then it votes for the candidate and resets its election timeout.
+		- Once a candidate has a majority of votes, it becomes the leader.
+- The leader sends out "Append Entries" messages to its followers. 
+	- These messages are sent in "heartbeat intervals".
+	- Followers respond to each "Append Entries" message. 
+	- This election term will continue until a follower stops receiving heartbeats and becomes a candidate.
+- Log Replication:
+	- Once we have a leader elected we need to replicate all changes to our system to all nodes.
+		- This is done by using the same Append Entries message that was used for heartbeats.
+	- Client A sends a change to the leader.
+	- Then the change is sent to the followers on the next heartbeat.
+	- An entry is committed once a majority of followers acknowledge it.
+	- And a response is sent to the client.
+- Once a network partition is removed, a Leader will step down if there is another leader with a higher election term.
+	- Nodes in the partition will roll back their uncommitted entries and match the new leader's log. 
+
+Paper notes:
+- Strong leader: Raft uses a stronger form of leadership than other consensus algorithms.
+- They are fully functional (available) as long as any majority of the servers are operational and can communicate with each other and with clients. Thus, a typical cluster of five servers can tolerate the failure of any two servers. 
+- If any server has applied a particular log entry to its state machine, then no other server may apply a different command for the same log index. 
+
+States:
+- Followers only respond to requests from other servers. 
+	- If a follower receives no communication, it becomes a candidate and initiates an election.
+	- If a client contacts a follower, the follower redirects it to the leader. 
+- A candidate that receives votes from a majority of the full cluster becomes the new leader. 
+	- Leaders typically operate until they fail.
+
+- Followers are passive: they issue no requests on their own but simply respond to requests from leaders and candidates. 
+- The leader handles all client requests
+
+State:
+Event: Start up
+Action:
+Transition to: Follower
+
+State: Follower 
+Event: Time out
+Action: Start election
+Transition to: Candidate
+
+State: Follower 
+Event: Time out
+Action: Start election
+Transition to: Candidate
+
+State: Candidate 
+Event: Time out
+Action: Start election
+Transition to: 
+
+State: Candidate 
+Event: Receive vote from majority of servers
+Action:
+Transition to: Leader
+
+State: Candidate 
+Event: Discover current leader or new term
+Action:
+Transition to: Follower
+
+State: Leader 
+Event: Discover server with higher term
+Action: 
+Transition to: Follower
+- While waiting for votes, a candidate may receive an AppendEntries RPC from another server claiming to be leader. If the leader’s term (included in its RPC) is at least as large as the candidate’s current term, then the candidate recognizes the leader as legitimate and returns to follower state.
+
+
+- Terms are numbered with consecutive integers. Each term begins with an election, in which one or more candidates attempt to become leader as described in Section 5.2. If a candidate wins the election, then it serves as leader for the rest of the term. In some situations an election will result in a split vote. In this case the term will end with no leader; a new term (with a new election.)
+- If a candidate or leader discovers that its term is out of date, it immediately reverts to follower state. 
+- If a server receives a request with a stale term number, it rejects the request.
+- Leaders send periodic heartbeats (AppendEntries RPCs that carry no log entries).
+
+RPC's:
+- RequestVote RPCs are initiated by candidates during elections (Section 5.2)
+- AppendEntries RPCs are initiated by leaders to replicate log entries and to provide a form of heartbeat (Section 5.3). 
+- Servers retry RPCs if they do not receive a response in a timely manner, and they issue RPCs in parallel for best performance.
+
+Log replication:
+- Once a leader has been elected, it begins servicing client requests. Each client request contains a command to be executed by the replicated state machines. The leader appends the command to its log as a new entry, then issues AppendEntries RPCs in parallel to each of the other servers to replicate the entry. 
+- When the entry has been safely replicated (as described below), the leader applies the entry to its state machine and returns the result of that execution to the client. If followers crash or run slowly, or if network packets are lost, the leader retries AppendEntries RPCs indefinitely (even after it has responded to the client) until all followers eventually store all log entries.
+- A log entry is committed once the leader that created the entry has replicated it on a majority of the servers.
+- The leader keeps track of the highest index it knows to be committed, and it includes that index in future AppendEntries RPCs (including heartbeats) so that the other servers eventually find out.
+- When sending an AppendEntries RPC, the leader includes the index and term of the entry in its log that immediately precedes the new entries. If the follower does not find an entry in its log with the same index and term, then it refuses the new entries.
+- In Raft, the leader handles inconsistencies by forcing the followers’ logs to duplicate its own. This means that conflicting entries in follower logs will be overwritten with entries from the leader’s log.
+	- The leader maintains a nextIndex for each follower, which is the index of the next log entry the leader will send to that follower. When a leader first comes to power, it initializes all nextIndex values to the index just after the last one in its log
+	- If a follower’s log is inconsistent with the leader’s, the AppendEntries consistency check will fail in the next AppendEntries RPC. After a rejection, the leader decrements nextIndex and retries the AppendEntries RPC. Eventually nextIndex will reach a point where the leader and follower logs match. 
+	- Only log entries from the leader’s current term are committed by counting replicas.
+- The restriction ensures that the leader for any given term contains all of the entries committed in previous terms (the Leader Completeness Property).
+	- Raft determines which of two logs is more up-to-date by comparing the index and term of the last entries in the logs. If the logs have last entries with different terms, then the log with the later term is more up-to-date. If the logs end with the same term, then whichever log is longer is more up-to-date
+
+- The broadcast time should be an order of magnitude less than the election timeout
