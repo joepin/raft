@@ -25,6 +25,11 @@ RaftNode::RaftNode(NetSocket *netSock) {
     electionTimeout  = rand() % (ELECTION_TIMEOUT_MAX - ELECTION_TIMEOUT_MIN + 1) + ELECTION_TIMEOUT_MIN;
     heartbeatInterval = HEARTBEAT_INTERVAL;
 
+    // Set timers.
+    electionTimer = new QTimer();
+    connect(electionTimer, SIGNAL(timeout()), this, SLOT(electionTimeoutHandler()));
+
+    // Default to a follower.
     currentState = FOLLOWER;
 }
 
@@ -44,10 +49,11 @@ void RaftNode::usage() {
 void RaftNode::receiveCommand() {
     QString message = dialogWindow->getTextline();
 
-    // Handle message type
+    // Handle message type.
     QString command = message.left(message.indexOf(" "));
     qDebug() << "RaftNode::receiveCommand: Handling command: " << command;
 
+    // If user enters one of these commands, ignore any trailing words.
     if (command == "START") {
         dialogWindow->clearTextline();
         startProtocol();
@@ -104,9 +110,27 @@ void RaftNode::receiveCommand() {
 void RaftNode::sendMessage(QString message) {
     qDebug() << "RaftNode::sendMessage";
 
-    // // Add the message to the chat window. 
-    // QString messageText = "<span style=\"color:'red';\"><b>" + nodeID + "</b></span>: " + message;
-    // dialogWindow->addMessage(messageText);
+    // If not participating in the protocol, store all the messages to send
+    // once participation begins again.
+    if (!protocolRunning) {
+        qDebug() << "RaftNode::sendMessage: Message added to queue: " << message;
+        messagesQueue.push_back(message);
+        return;
+    }
+
+    switch (currentState) {
+        case FOLLOWER:
+            break;
+        case CANDIDATE:
+            break;
+        case LEADER:
+            break;
+    }
+}
+
+// @TODO - Send backlog of messages from messagesQueue.
+void RaftNode::sendBacklog() {
+    qDebug() << "RaftNode::sendBacklog";
 }
 
 // @TODO - Callback when receiving a message from the socket. 
@@ -123,57 +147,68 @@ void RaftNode::receiveMessage() {
         quint16 senderPort;
         QVariantMap message;
 
+        // If not participating in the protocol, drop all incoming messages. 
+        if (!protocolRunning) {
+            qDebug() << "RaftNode::receiveMessage: Dropping incoming message.";
+            return;
+        }
+
         sock->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
+
+        // If ignoring the requesting node, drop the incoming packet. 
+        if (droppedNodes.contains(QString::number(senderPort))) {
+            qDebug() << "RaftNode::receiveMessage: Dropping incoming message.";
+            return;
+        }
 
         QDataStream stream(&datagram, QIODevice::ReadOnly);
 
         stream >> message;
+
+        switch (currentState) {
+            case FOLLOWER:
+                break;
+            case CANDIDATE:
+                break;
+            case LEADER:
+                break;
+        }
 
         datagram.clear();
     }
 }
 
 // @TODO - Transition to candidate and begin process of gathering votes.
-void RaftNode::requestVoteRPC() {
+void RaftNode::requestVote() {
     qDebug() << "RaftNode::requestVoteRPC";
+
+    switch (currentState) {
+        case FOLLOWER:
+            break;
+        case CANDIDATE:
+            break;
+        case LEADER:
+            break;
+    }
 }
 
 // @TODO - Replicate log entries.
-void RaftNode::appendEntriesRPC() {
+void RaftNode::appendEntries() {
     qDebug() << "RaftNode::appendEntriesRPC";
-}
 
-// @TODO - Print chat history. Only show messages that have reached consensus.
-void RaftNode::getChat() {
-    qDebug() << "RaftNode::getChat";
-   
-    QString message = "";
-
-    if (log.size() == 0) {
-        message += "Log is empty.";
-    } else {
-        message += "<br>Log: ";
-        // Print each log entry.
-        for (auto const& x : log) {
-            message +=  "<br>" + QString::number(x.term) + ": " + x.command;
-        }
+    switch (currentState) {
+        case FOLLOWER:
+            break;
+        case CANDIDATE:
+            break;
+        case LEADER:
+            break;
     }
-
-    // Add the message to the chat window. 
-    QString messageText = "<span style=\"color:'red';\"><b>" + nodeID + "</b></span>: " + message;
-    dialogWindow->addMessage(messageText);
-}
-
-// @TODO - Stop participating in Raft protocol.
-void RaftNode::stopProtocol() {
-    qDebug() << "RaftNode::stopProtocol";
-    protocolRunning = false;
 }
 
 // @TODO - Start participating in Raft protocol.
 void RaftNode::startProtocol() {
     qDebug() << "RaftNode::startProtocol";
-
     protocolRunning = true;
 
     // On startup, a node will send a message to a random port. 
@@ -188,6 +223,8 @@ void RaftNode::startProtocol() {
     // Begin the election timeout. 
     startElectionTimer();
     
+    // Begin discovery.
+
     // QByteArray buf;
     // QDataStream datastream(&buf, QIODevice::ReadWrite);
     // QVariantMap message;
@@ -206,14 +243,73 @@ void RaftNode::startProtocol() {
     // sock->writeDatagram(&buf, buf.size(), port);
 }
 
-// @TODO - Drop packets from targetNode.
-void RaftNode::dropComms(QString targetNode) {
-    qDebug() << "RaftNode::dropComms";
+// Stop participating in Raft protocol.
+void RaftNode::stopProtocol() {
+    qDebug() << "RaftNode::stopProtocol";
+    
+    protocolRunning = false;
+
+    // Stop protocol elections.
+    stopElectionTimer();
 }
 
-// @TODO - Restore communications (no longer drop packets) from targetNode.
+// Drop packets from targetNode.
+void RaftNode::dropComms(QString targetNode) {
+    qDebug() << "RaftNode::dropComms";
+
+    QString message = "Ignoring Node "+ targetNode + ".";
+
+    if (droppedNodes.contains(targetNode)) {
+        qDebug() << "RaftNode::dropComms: Already ignoring" << targetNode << ".";
+    } else {
+        qDebug() << "RaftNode::dropComms: Ignoring" << targetNode << ".";
+        droppedNodes.append(targetNode);
+    }
+
+    // Add the message to the chat window. 
+    QString messageText = "<span style=\"color:'red';\"><b>" + nodeID + "</b></span>: " + message;
+    dialogWindow->addMessage(messageText);
+}
+
+// Restore communications (no longer drop packets) from targetNode.
 void RaftNode::restoreComms(QString targetNode) {
     qDebug() << "RaftNode::restoreComms";
+
+    QString message = "";
+
+    if (droppedNodes.contains(targetNode)) {
+        message += "Restoring communication with Node "+ targetNode + ".";
+        qDebug() << "RaftNode::restoreComms: Restoring communication with" << targetNode << ".";
+        droppedNodes.removeAll(targetNode);
+    } else {
+        message += "Cannot restore - Node "+ targetNode + " has not been dropped.";
+        qDebug() << "RaftNode::restoreComms: Communication with" << targetNode << "has not been dropped.";
+    }
+
+    // Add the message to the chat window. 
+    QString messageText = "<span style=\"color:'red';\"><b>" + nodeID + "</b></span>: " + message;
+    dialogWindow->addMessage(messageText);
+}
+
+// Print chat history. Only show messages that have reached consensus.
+void RaftNode::getChat() {
+    qDebug() << "RaftNode::getChat";
+   
+    QString message = "";
+
+    if (log.size() == 0) {
+        message += "Log is empty.";
+    } else {
+        message += "Log: ";
+        // Print each log entry.
+        for (auto const& x : log) {
+            message +=  "<br>" + QString::number(x.term) + ": " + x.command;
+        }
+    }
+
+    // Add the message to the chat window. 
+    QString messageText = "<span style=\"color:'red';\"><b>" + nodeID + "</b></span>: " + message;
+    dialogWindow->addMessage(messageText);
 }
 
 // Print all node ID's and the Raft state.
@@ -221,7 +317,7 @@ void RaftNode::getNodes() {
     qDebug() << "RaftNode::getNodes";
 
     // Get state of the current node. 
-    QString message = "<br>Raft state: ";
+    QString message = "Raft state: ";
     switch (currentState) {
         case FOLLOWER:
             message += "Follower";
@@ -239,7 +335,7 @@ void RaftNode::getNodes() {
         message += "<br>Leader: " + currentLeader;
     }
 
-    // Print each known node if they exist.
+    // Print each known node it exists.
     if (knownNodes.size() != 0) {
         message += "<br>Nodes:";    
         for (auto const& x : knownNodes) {
@@ -258,14 +354,27 @@ void RaftNode::electionTimeoutHandler() {
 
     // Stop the timer.
     electionTimer->stop();
+
+    switch (currentState) {
+        case FOLLOWER:
+            break;
+        case CANDIDATE:
+            break;
+        case LEADER:
+            break;
+    }
 }
 
 // Start the election timer. 
 void RaftNode::startElectionTimer() {
     qDebug() << "RaftNode::startElectionTimer: Starting the election timer.";
-    electionTimer = new QTimer();
-    connect(electionTimer, SIGNAL(timeout()), this, SLOT(electionTimeoutHandler()));
     electionTimer->start(electionTimeout);
+}
+
+// Stop the election timer.
+void RaftNode::stopElectionTimer() {
+    qDebug() << "RaftNode::stopElectionTimer: Stopping the election timer.";
+    electionTimer->stop();
 }
 
 // Restart the election timer.
@@ -409,7 +518,7 @@ qint64 NetSocket::writeDatagram(QByteArray *buf, int bufSize, quint16 port) {
     qint64 bytesSent = 0;
     bytesSent = QUdpSocket::writeDatagram(*buf, QHostAddress::LocalHost, port);
     if (bytesSent < 0 || bytesSent != bufSize) {
-        qDebug() << "Error sending full datagram to" << QHostAddress::LocalHost << ":" << port << ".";
+        qDebug() << "Error sending full datagram to" << QHostAddress::LocalHost << ":" << port;
     }
     return bytesSent;
 }
@@ -427,7 +536,7 @@ bool NetSocket::bind() {
 
     // Failure binding.
     qDebug() << "NetSocket::bind: No ports in default range: " << myPortMin 
-        << "-" << myPortMax << " available";
+        << "-" << myPortMax << " available.";
     return false;
 }
 

@@ -139,13 +139,14 @@ class RaftNode : public QObject {
         std::vector<LogEntry> log;               /* Log entries for the state machine.                                               */
         std::vector<QString> messagesQueue;      /* Queue of messages accumulated when application is not participating in protocol. */ 
 
-        void requestVoteRPC();                   /* Invoked by candidates to gather votes.                              */
-        void appendEntriesRPC();                 /* Invoked by leader to replicate log entries. Also used as heartbeat. */
+        void requestVote();                      /* Invoked by candidates to gather votes.                              */
+        void appendEntries();                    /* Invoked by leader to replicate log entries. Also used as heartbeat. */
 
         void getChat();                          /* Print current chat history (logs with consensus) of current node.   */
         void getNodes();                         /* Print all nodes, current node state, and leader ID (port).          */
 
         void sendMessage(QString);               /* Send message from the node to the leader.            */
+        void sendBacklog();                      /* Send backlog of messages from messagesQueue.         */
 
         void stopProtocol();                     /* Stop participation in the Raft protocol.             */
         void startProtocol();                    /* Start participation in the Rat protocol.             */
@@ -154,6 +155,7 @@ class RaftNode : public QObject {
         void restoreComms(QString);              /* Stop ignoring packets from a given nodes.            */
 
         void startElectionTimer();               /* Start election timeout.                              */
+        void stopElectionTimer();                /* Stop election timeout.                               */
         void restartElectionTimer();             /* Restart (reset) the election timeout.                */
         
         void startPrintTimer();                  /* Start timer for helper printing function.            */
@@ -164,5 +166,69 @@ class RaftNode : public QObject {
 
 ////////
 
+
+// 
+// Message definitions:
+// 
+// AppendEntriesRPC message from the Leader:
+// {
+//     "type": "AppendEntries"
+//     "term": "",             Leader’s term
+//     "leaderId": "",         So follower can redirect clients
+//     "prevLogIndex": "",     Index of log entry immediately preceding new ones
+//     "prevLogTerm": "",      Term of prevLogIndex entry
+//     "entries": "",          Entries to store (empty for heartbeat)
+//     "leaderCommit": ""      Leader’s commitIndex
+// }
+// 
+// AppendEntriesRPC ACK from the nodes:
+// {
+//     "type": "AppendEntriesACK"
+//     "term": "",             currentTerm, for leader to update itself
+//     "success": ""           True if follower contained entry matching prevLogIndex and prevLogTerm
+// }
+
+// RequestVoteRPC message from candidates:
+// {
+//     "type": "RequestVote"
+//     "term": "",             Candidate’s term
+//     "candidateId": "",      Candidate requesting vote
+//     "lastLogIndex": "",     Index of candidate’s last log entry
+//     "lastLogTerm": ""       Term of candidate’s last log entry 
+// }
+// 
+// RequestVoteRPC ACK from the nodes:
+// {
+//     "type": "RequestVoteACK"
+//     "term": "",             currentTerm, for candidate to update itself
+//     "voteGranted": ""       True means candidate received vote
+// }
+// 
+// Startup message from new node:
+// {
+//     "type": "Startup"
+//     "txnID": ""             Transaction ID
+// }
+// 
+// Startup ACK from other nodes:
+// {
+//     "type": "StartupACK"
+//     "leaderId": "",         So follower can redirect clients
+//     "txnID": ""             Transaction ID
+// }
+// 
+// Message from a follower:
+// {
+//     "type": "Message"
+//     "entries": ""           Log entries to forward to the Leader
+//     "txnID": ""             Transaction ID
+// }
+// 
+// Message ACK from the Leader:
+// {
+//     "type": "MessageACK"
+//     "txnID": ""             Transaction ID
+// }
+// 
 
 #endif // RAFT_MAIN_HH
