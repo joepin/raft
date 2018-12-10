@@ -12,21 +12,107 @@ RaftNode::RaftNode(NetSocket *netSock) {
     sock   = netSock;
     nodeID = QString::number(sock->getMyPort());
     neighborPorts = sock->getPorts();
-    
+
+    // Set default values.    
     currentTerm = 0;
-    votedFor    = 0;
     commitIndex = 0;
     lastApplied = 0;
-    
+    votedFor    = "";
+    currentLeader   = "";
+    protocolRunning = false;
+
     // Set timeouts.
     electionTimeout  = rand() % (ELECTION_TIMEOUT_MAX - ELECTION_TIMEOUT_MIN + 1) + ELECTION_TIMEOUT_MIN;
-    heartbeatTimeout = HEARTBEAT_TIMEOUT;
+    heartbeatInterval = HEARTBEAT_INTERVAL;
 
-    current_state = FOLLOWER;
+    currentState = FOLLOWER;
 }
 
-// Callback when receiving a message from the socket. 
+// Print usage to CLI.
+void RaftNode::usage() {
+    std::cout << "Error. Unrecognizable command. Expected usage: " << std::endl
+          << "  <START>  " << std::endl
+          << "  <MSG message>  " << std::endl
+          << "  <GET_CHAT>  " << std::endl
+          << "  <STOP>  " << std::endl
+          << "  <DROP node_id>  " << std::endl
+          << "  <RESTORE node_id>  " << std::endl
+          << "  <GET_NODES>  " << std::endl;
+}
+
+// Callback when user presses "Enter" in the textline widget.
+void RaftNode::receiveCommand() {
+    QString message = dialogWindow->getTextline();
+
+    // Handle message type
+    QString command = message.left(message.indexOf(" "));
+    qDebug() << "RaftNode::receiveCommand: Handling command: " << command;
+
+    if (command == "START") {
+        dialogWindow->clearTextline();
+        startProtocol();
+        return;
+    }
+    else if (command == "GET_CHAT") {
+        dialogWindow->clearTextline();
+        getChat();
+        return;
+    }
+    else if (command == "STOP") {
+        dialogWindow->clearTextline();
+        stopProtocol();
+        return;
+    }
+    else if (command == "GET_NODES") {
+        dialogWindow->clearTextline();
+        getNodes();
+        return;
+    }
+
+    // Remaining command options expect at least two words.
+    if (message.indexOf(" ") == -1) {
+        usage();
+        return;
+    }
+
+    // Get remaining message parameters.
+    message = message.mid(message.indexOf(" ") + 1);
+    if (message.isNull() || message.isEmpty()) {
+        usage();
+        return;            
+    }
+
+    if (command == "MSG") {
+        dialogWindow->clearTextline();
+        sendMessage(message);
+    }
+    else if (command == "DROP") {
+        dialogWindow->clearTextline();
+        dropComms(message);
+    }
+    else if (command == "RESTORE") {
+        dialogWindow->clearTextline();
+        restoreComms(message);
+    }
+    else {
+        usage();
+        return;
+    }
+}
+
+// @TODO - Send message from the chatroom.
+void RaftNode::sendMessage(QString message) {
+    qDebug() << "RaftNode::sendMessage";
+
+    // // Add the message to the chat window. 
+    // QString messageText = "<span style=\"color:'red';\"><b>" + nodeID + "</b></span>: " + message;
+    // dialogWindow->addMessage(messageText);
+}
+
+// @TODO - Callback when receiving a message from the socket. 
 void RaftNode::receiveMessage() {
+    qDebug() << "RaftNode::receiveMessage";
+
     NetSocket *sock = this->sock;
 
     // Read each datagram.
@@ -47,142 +133,196 @@ void RaftNode::receiveMessage() {
     }
 }
 
-// Print usage to console.
-void RaftNode::usage() {
-    std::cout << "Error. Unrecognizable command. Expected usage: " << std::endl
-          << "  <START>  " << std::endl
-          << "  <MSG message>  " << std::endl
-          << "  <GET_CHAT>  " << std::endl
-          << "  <STOP>  " << std::endl
-          << "  <DROP node_id>  " << std::endl
-          << "  <RESTORE node_id>  " << std::endl
-          << "  <GET_NODES>  " << std::endl;
+// @TODO - Transition to candidate and begin process of gathering votes.
+void RaftNode::requestVoteRPC() {
+    qDebug() << "RaftNode::requestVoteRPC";
 }
 
-// Callback when user presses "Enter" in the textline widget.
-void RaftNode::receiveCommand() {
-    QString message = dialogWindow->getTextline();
-
-    // Handle message type
-    QString command = message.left(message.indexOf(" "));
-    qDebug() << "RaftNode::sendMessage: Handling command: " << command;
-
-    if (command == "START") {
-        startProtocol();
-        return;
-    }
-    else if (command == "GET_CHAT") {
-        getChat();
-        return;
-    }
-    else if (command == "STOP") {
-        stopProtocol();
-        return;
-    }
-    else if (command == "GET_NODES") {
-        getNodes();
-        return;
-    }
-
-    // Remaining command options expect at least two words.
-    if (message.indexOf(" ") == -1) {
-        usage();
-        return;
-    }
-
-    // Get remaining message parameters.
-    message = message.mid(message.indexOf(" ") + 1);
-    if (message.isNull() || message.isEmpty()) {
-        usage();
-        return;            
-    }
-
-    if (command == "MSG") {
-        sendMessage(message);
-    }
-    else if (command == "DROP") {
-        dropComms(message);
-    }
-    else if (command == "RESTORE") {
-        restoreComms(message);
-    }
-    else {
-        usage();
-        return;
-    }
+// @TODO - Replicate log entries.
+void RaftNode::appendEntriesRPC() {
+    qDebug() << "RaftNode::appendEntriesRPC";
 }
 
-// Send message to the chatroom.
-void RaftNode::sendMessage(QString message) {
-    qDebug() << "RaftNode::sendMessage";
-}
-
- // Print chat history.
+// @TODO - Print chat history. Only show messages that have reached consensus.
 void RaftNode::getChat() {
     qDebug() << "RaftNode::getChat";
+   
+    QString message = "";
 
+    if (log.size() == 0) {
+        message += "Log is empty.";
+    } else {
+        message += "<br>Log: ";
+        // Print each log entry.
+        for (auto const& x : log) {
+            message +=  "<br>" + QString::number(x.term) + ": " + x.command;
+        }
+    }
+
+    // Add the message to the chat window. 
+    QString messageText = "<span style=\"color:'red';\"><b>" + nodeID + "</b></span>: " + message;
+    dialogWindow->addMessage(messageText);
 }
 
-// Stop participating in Raft protocol.
+// @TODO - Stop participating in Raft protocol.
 void RaftNode::stopProtocol() {
     qDebug() << "RaftNode::stopProtocol";
+    protocolRunning = false;
 }
 
-// Start participating in Raft protocol.
+// @TODO - Start participating in Raft protocol.
 void RaftNode::startProtocol() {
     qDebug() << "RaftNode::startProtocol";
+
+    protocolRunning = true;
+
+    // On startup, a node will send a message to a random port. 
+    // If the port is the leader, the port node will send back the leader's port. 
+    // If the port is not the leader, but the port node knows of the leader, the port node will send back the leader's port. 
+    // If the port is not the leader, and the port node does not know of the leader, the port node will send an empty response. 
+    // The initiator will time out and choose a new port.  
+
+    // Begin printing for debugging.
+    startPrintTimer();
+
+    // Begin the election timeout. 
+    startElectionTimer();
+    
+    // QByteArray buf;
+    // QDataStream datastream(&buf, QIODevice::ReadWrite);
+    // QVariantMap message;
+
+    // // Serialize the message.
+    // message["term"] = "";
+    // message["leaderId"] = "";
+    // message["prevLogIndex"] = "";
+    // message["prevLogTerm"] = "";
+    // message["entries"] = "";
+    // message["leaderCommit"] = "";
+
+    // datastream << message;
+
+    // // Send message to the socket.
+    // sock->writeDatagram(&buf, buf.size(), port);
 }
 
-// Drop packets from targetNode.
+// @TODO - Drop packets from targetNode.
 void RaftNode::dropComms(QString targetNode) {
     qDebug() << "RaftNode::dropComms";
 }
 
-// Restore communications (no longer drop packets) from targetNode.
+// @TODO - Restore communications (no longer drop packets) from targetNode.
 void RaftNode::restoreComms(QString targetNode) {
     qDebug() << "RaftNode::restoreComms";
 }
 
-// Print all node ID's and Raft state.
+// Print all node ID's and the Raft state.
 void RaftNode::getNodes() {
     qDebug() << "RaftNode::getNodes";
+
+    // Get state of the current node. 
+    QString message = "<br>Raft state: ";
+    switch (currentState) {
+        case FOLLOWER:
+            message += "Follower";
+            break;
+        case CANDIDATE:
+            message += "Candidate";
+            break;
+        case LEADER:
+            message += "Leader";
+            break;
+    }
+
+    // Print the leader if it exists.
+    if (!currentLeader.isEmpty()) {
+        message += "<br>Leader: " + currentLeader;
+    }
+
+    // Print each known node if they exist.
+    if (knownNodes.size() != 0) {
+        message += "<br>Nodes:";    
+        for (auto const& x : knownNodes) {
+            message +=  "<br>" + x;
+        }
+    }
+
+    // Add the message to the chat window. 
+    QString messageText = "<span style=\"color:'red';\"><b>" + nodeID + "</b></span>: " + message;
+    dialogWindow->addMessage(messageText);
 }
 
-// // Add the message to the chat window. 
-// QString messageText = "<span style=\"color:'red';\"><b>" + nodeID + "</b></span>: " + message;
-// dialogWindow->addMessage(messageText);
+// @TODO - Handler for the election timeout.
+void RaftNode::electionTimeoutHandler() {
+    qDebug() << "RaftNode::electionTimeout: Handling the election timeout.";
 
-// // Clear the textline to get ready for the next input message.
-// dialogWindow->clearTextline();
+    // Stop the timer.
+    electionTimer->stop();
+}
 
-// QByteArray datagram;
-// QDataStream datastream(&datagram, QIODevice::ReadWrite);
+// Start the election timer. 
+void RaftNode::startElectionTimer() {
+    qDebug() << "RaftNode::startElectionTimer: Starting the election timer.";
+    electionTimer = new QTimer();
+    connect(electionTimer, SIGNAL(timeout()), this, SLOT(electionTimeoutHandler()));
+    electionTimer->start(electionTimeout);
+}
 
-// datastream << message;
+// Restart the election timer.
+void RaftNode::restartElectionTimer() {
+    qDebug() << "RaftNode::restartElectionTimer: Restarting the election timer.";
+    electionTimer->start();
+}
 
-// // Send message to the socket. 
-// sock->writeDatagram(&datagram, datagram.size(), neighborPorts[0]);
+// Start the printing timer. 
+void RaftNode::startPrintTimer() {
+    qDebug() << "RaftNode::startPrintTimer: Starting the printing timer.";
+    QTimer *printTimer = new QTimer();
+    connect(printTimer, SIGNAL(timeout()), this, SLOT(auxPrint()));
+    printTimer->start(20000);
+}
 
-// void ChatDialog::sendRumorMessage(QString origin, qint32 seq, QString text, quint16 port) {
-//   QByteArray buf;
-//   QDataStream datastream(&buf, QIODevice::ReadWrite);
-//   QVariantMap message;
+// Helper to print current state of the node. 
+void RaftNode::auxPrint() {
+    qDebug() << "RaftNode::auxPrint";
+    qDebug() << "     currentState: " << currentState;
+    qDebug() << "      currentTerm: " << currentTerm;
+    qDebug() << "         votedFor: " << votedFor;
+    qDebug() << "      commitIndex: " << commitIndex;
+    qDebug() << "      lastApplied: " << lastApplied;
+    qDebug() << "    currentLeader: " << currentLeader;
+    qDebug() << "  protocolRunning: " << protocolRunning;
+    qDebug() << "     droppedNodes: ";
+    
+    for (auto const& x : droppedNodes) {
+        qDebug() <<  "       " << x;
+    }
+    
+    qDebug() << "       knownNodes: ";
+    for (auto const& x : knownNodes) {
+        qDebug() <<  "       " << x;
+    }
 
-//   // Serialize the message.
-//   message["ChatText"] = text;
-//   message["Origin"] = origin;
-//   message["SeqNo"] = seq;
+    qDebug() << "        nextIndex: ";
+    for (auto const& x : nextIndex) {
+        qDebug() <<  "       " << x.first << ':' << x.second;
+    }
 
-//   qDebug() << "Sending \"rumor\" message to port:" << port
-//     << ", <\"ChatText\"," << message["ChatText"].toString()
-//     << "><\"Origin\"," << message["Origin"].toString()
-//     << "><\"SeqNo\"," << message["SeqNo"].toString() << ">";
+    qDebug() << "       matchIndex: ";
+    for (auto const& x : matchIndex) {
+        qDebug() <<  "       " << x.first << ':' << x.second;
+    }
 
-//   datastream << message;
-
-//   // Send message to the socket.
-//   sock->writeDatagram(&buf, buf.size(), port);
-// }
+    qDebug() << "              log: ";
+    for (auto const& x : log) {
+        qDebug() << "       " << x.term << ": " << x.command;
+    }
+    
+    qDebug() << "    messagesQueue: ";
+    for (auto const& x : messagesQueue) {
+        qDebug() << "       " << x;
+    }
+}
 
 // Return node's ID.       
 QString RaftNode::getID() {
