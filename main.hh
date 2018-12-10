@@ -17,9 +17,10 @@
 #include <unistd.h>
 #include <iostream>
 
-#define ELECTION_TIMEOUT_MIN 1500
-#define ELECTION_TIMEOUT_MAX 3000
-#define HEARTBEAT_INTERVAL   200
+#define ELECTION_TIMEOUT_MIN 15000
+#define ELECTION_TIMEOUT_MAX 30000
+#define HEARTBEAT_INTERVAL   2000
+#define DISCOVERY_INTERVAL   1000
 
 /* Forward declaration. */
 class RaftNode;
@@ -109,6 +110,7 @@ class RaftNode : public QObject {
         void receiveMessage();                   /* Handler for when node receives a packet.             */
         void receiveCommand();                   /* Handler for when client inputs a message.            */
         void electionTimeoutHandler();           /* Handler for when the election timeout is triggered.  */
+        void discoveryTimeoutHandler();          /* Handler for when the discovery timeout is triggered. */
         void auxPrint();                         /* Helper to print known values.                        */
 
     private:
@@ -116,6 +118,7 @@ class RaftNode : public QObject {
         ChatDialog *dialogWindow;
 
         QString nodeID;                          /* Current node ID (port)                               */
+        QString txnID;                           /* Transaction ID of last message sent.                 */
         enum states currentState;                /* Current node state.                                  */
         quint64 currentTerm;                     /* Latest term the node has seen.                       */
         QString votedFor;                        /* CandidateId that received vote in current term.      */
@@ -128,6 +131,7 @@ class RaftNode : public QObject {
         bool protocolRunning;                    /* T/F is node is running the protocol.                 */
 
         QTimer *electionTimer;                   /* Timer that handles elections. Reset whenever heartbeat is received. */
+        QTimer *discoveryTimer;                  /* Timer that handles discovery.                                       */
         quint64 electionTimeout;                 /* Election timeout value.                                             */
         quint64 heartbeatInterval;               /* Leader's heartbeat interval value.                                  */
 
@@ -145,7 +149,7 @@ class RaftNode : public QObject {
         void getChat();                          /* Print current chat history (logs with consensus) of current node.   */
         void getNodes();                         /* Print all nodes, current node state, and leader ID (port).          */
 
-        void sendMessage(QString);               /* Send message from the node to the leader.            */
+        void sendChat(QString);                  /* Send chat message from the node to the leader.       */
         void sendBacklog();                      /* Send backlog of messages from messagesQueue.         */
 
         void stopProtocol();                     /* Stop participation in the Raft protocol.             */
@@ -158,6 +162,9 @@ class RaftNode : public QObject {
         void stopElectionTimer();                /* Stop election timeout.                               */
         void restartElectionTimer();             /* Restart (reset) the election timeout.                */
         
+        void startDiscovery();                   /* Begin the discovery process of finding new nodes.    */
+        void stopDiscovery();                    /* Terminate the discovery process.                     */
+
         void startPrintTimer();                  /* Start timer for helper printing function.            */
         void usage();                            /* Print usage message in CLI for client.               */
 
@@ -170,7 +177,7 @@ class RaftNode : public QObject {
 // 
 // Message definitions:
 // 
-// AppendEntriesRPC message from the Leader:
+// AppendEntries message from the Leader:
 // {
 //     "type": "AppendEntries"
 //     "term": "",             Leader’s term
@@ -181,14 +188,14 @@ class RaftNode : public QObject {
 //     "leaderCommit": ""      Leader’s commitIndex
 // }
 // 
-// AppendEntriesRPC ACK from the nodes:
+// AppendEntries ACK from the nodes:
 // {
 //     "type": "AppendEntriesACK"
 //     "term": "",             currentTerm, for leader to update itself
 //     "success": ""           True if follower contained entry matching prevLogIndex and prevLogTerm
 // }
 
-// RequestVoteRPC message from candidates:
+// RequestVote message from candidates:
 // {
 //     "type": "RequestVote"
 //     "term": "",             Candidate’s term
@@ -197,36 +204,24 @@ class RaftNode : public QObject {
 //     "lastLogTerm": ""       Term of candidate’s last log entry 
 // }
 // 
-// RequestVoteRPC ACK from the nodes:
+// RequestVote ACK from the nodes:
 // {
 //     "type": "RequestVoteACK"
 //     "term": "",             currentTerm, for candidate to update itself
 //     "voteGranted": ""       True means candidate received vote
 // }
 // 
-// Startup message from new node:
-// {
-//     "type": "Startup"
-//     "txnID": ""             Transaction ID
-// }
-// 
-// Startup ACK from other nodes:
-// {
-//     "type": "StartupACK"
-//     "leaderId": "",         So follower can redirect clients
-//     "txnID": ""             Transaction ID
-// }
-// 
 // Message from a follower:
 // {
 //     "type": "Message"
-//     "entries": ""           Log entries to forward to the Leader
+//     "entries": ""           Log entries to forward to the Leader (empty for startup)
 //     "txnID": ""             Transaction ID
 // }
 // 
 // Message ACK from the Leader:
 // {
 //     "type": "MessageACK"
+//     "leaderId": "",         So follower can redirect clients
 //     "txnID": ""             Transaction ID
 // }
 // 
