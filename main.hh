@@ -13,13 +13,20 @@
 #include <QUdpSocket>
 #include <QElapsedTimer>
 #include <QVBoxLayout>
-#include <vector>
+#include <map>
 #include <unistd.h>
+#include <iostream>
 
-#define ELECTION_TIMEOUT_MIN 0
-#define ELECTION_TIMEOUT_MAX 0
-#define HEARTBEAT_TIMEOUT 0
-#define BROADCAST_TIMEOUT 0
+#define ELECTION_TIMEOUT_MIN 150
+#define ELECTION_TIMEOUT_MAX 300
+#define HEARTBEAT_TIMEOUT 2000
+
+// Forward declaration.
+class RaftNode;
+
+
+////////
+
 
 enum states {
     FOLLOWER,    /* Node is a follower                   */
@@ -37,74 +44,119 @@ enum messages {
     GET_NODES    /* Get all node ids, show Raft state                       */
 };
 
-class RaftNode {
-    public:
-        RaftNode();
-
-    private:
-        enum states current_state;  /* Current node state */
-        quint64 currentTerm;        /* Latest term the node has seen                       */
-        quint64 votedFor;           /* CandidateId that received vote in current term      */
-        quint64 commitIndex;        /* Index of highest log entry known to be committed    */
-        quint64 lastApplied;        /* Index of highest log entry applied to state machine */
-        std::vector<QString> nextIndex;   /* Per node, index of the next log entry to send to that node */
-        std::vector<QString> matchIndex;  /* Per node, index of the highest log entry known to be replicated on that node */
-};
-
-struct LogEntry {
-    quint64 currentTerm;
-    quint64 seqNum;
-    QString command;
-    QDateTime recvByLeader;
-};
-
-struct PeerNode {
-    quint64 peer;
-    quint64 next_index;
-    quint64 match_index;
-    bool vote_granted;
-    bool RPC_due;
-    bool heartbeat_due;
-};
-
-class NetSocket : public QUdpSocket {
-  Q_OBJECT
-
-  public:
-    // Initialize the net socket.
-    NetSocket();
-
-    // Bind this socket to a P2Papp-specific default port.
-    bool bind();
-
-    // Find ports.
-    QList<quint16> findPorts();
-
-  private:
-    quint16 myPortMin;
-    quint16 myPortMax;
-    quint16 myPort;
-    QList<quint16> ports;
-};
 
 ////////
 
-class ChatDialog : public QDialog {
-  Q_OBJECT
 
-  public:
-    NetSocket *sock;
-    ChatDialog(NetSocket*);
+class NetSocket : public QUdpSocket {
+    Q_OBJECT
 
-  public slots:
-    void gotReturnPressed();
-    void gotMessage();
-
-  private:
-    QTextEdit *textview;
-    QLineEdit *textline;
+    public:
+        NetSocket();                             /* Initialize the net socket.          */
+        bool bind();                             /* Bind socket to a port.              */
+        void setPorts();                         /* Set list of neighboring ports.      */
+        QList<quint16> getPorts();               /* Return list of neighboring ports.   */
+        quint16 getMyPort();                     /* Return bound port.                  */
+        qint64 writeDatagram(QByteArray*, int, quint16);     /* Send a datagram         */
     
-    QString myOrigin;
+    private:
+        quint16 myPortMin;
+        quint16 myPortMax;
+        quint16 myPort;
+        QList<quint16> neighborPorts;
 };
 
+
+////////
+
+
+class ChatDialog : public QDialog {
+    Q_OBJECT
+
+    public:
+        ChatDialog(NetSocket *, RaftNode *);     /* Create chat dialog window.                         */
+        void clearTextline();                    /* Clear input textline.                              */
+        void addMessage(QString);                /* Add messaege to chat dialog window.                */
+        QString getTextline();                   /* Return the input textline after user presses enter */
+
+    private:
+        QTextEdit *textview;
+        QLineEdit *textline;
+};
+
+
+////////
+
+
+class RaftNode : public QObject {
+    Q_OBJECT
+
+    public:
+        RaftNode(NetSocket *);
+        QString getID();
+        void setDialog(ChatDialog *);
+
+    public slots:
+        void receiveMessage();
+        void receiveCommand();
+
+    private:
+        ChatDialog *dialogWindow;
+
+        NetSocket *sock;
+
+        QString nodeID;
+        QList<quint16> neighborPorts;
+        std::map<QString, quint16> knownNeighbors;
+
+        enum states current_state;               /* Current node state                                  */
+        quint64 currentTerm;                     /* Latest term the node has seen                       */
+        quint64 votedFor;                        /* CandidateId that received vote in current term      */
+        quint64 commitIndex;                     /* Index of highest log entry known to be committed    */
+        quint64 lastApplied;                     /* Index of highest log entry applied to state machine */
+        
+        quint64 electionTimeout;
+        quint64 heartbeatTimeout;
+
+        std::map<QString, quint64> nextIndex;    /* Per node, index of the next log entry to send to that node                   */
+        std::map<QString, quint64> matchIndex;   /* Per node, index of the highest log entry known to be replicated on that node */
+
+        void usage();
+
+        void sendMessage(QString);
+
+        void getChat();
+
+        void stopProtocol();
+        void startProtocol();
+
+        void dropComms(QString);
+        void restoreComms(QString);
+
+        void getNodes();
+};
+
+
+////////
+
+
 #endif // RAFT_MAIN_HH
+
+
+
+
+// struct LogEntry {
+//     quint64 currentTerm;
+//     quint64 seqNum;
+//     QString command;
+//     QDateTime recvByLeader;
+// };
+
+// struct PeerNode {
+//     quint64 peer;
+//     quint64 next_index;
+//     quint64 match_index;
+//     bool vote_granted;
+//     bool RPC_due;
+//     bool heartbeat_due;
+// };
