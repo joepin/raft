@@ -10,7 +10,7 @@ RaftNode::RaftNode(NetSocket *netSock) {
 
     // Set the port configs.
     sock   = netSock;
-    nodeID = QString::number(sock->getMyPort());
+    nodeID = sock->getMyPort();
     QList<quint16> neighborPorts = sock->getPorts();
 
     // Add list of all nodes within the range to knownNodes.
@@ -22,10 +22,11 @@ RaftNode::RaftNode(NetSocket *netSock) {
     currentTerm = 0;
     commitIndex = 0;
     lastApplied = 0;
-    votedFor    = "";
+    votedFor    = 0;
     numVotesRcvd    = 0;   
     currentLeader   = "";
     protocolRunning = false;
+    majority = (neighborPorts.size() / 2) + 1;
 
     // Set timeouts.
     electionTimeout   = rand() % (ELECTION_TIMEOUT_MAX - ELECTION_TIMEOUT_MIN + 1) + ELECTION_TIMEOUT_MIN;
@@ -190,14 +191,19 @@ void RaftNode::receiveMessage() {
 
                     // If Candidate is in the same or newer term:
                     if (message["term"] >= currentTerm) {
-                        // If votedFor is null or candidateId
-                        if (votedFor == "" || votedFor == message["candidateId"]) {
-                            // And candidate’s log is at least as up-to-date as receiver’s log
-                            if (log.size() > 0) {
-                                if (message["lastLogIndex"].toInt() >= (int)log.size()) {
+                        // If votedFor is null or candidateId.
+                        if (votedFor == 0 || votedFor == message["candidateId"]) {
+                            // And candidate’s log is at least as up-to-date as receiver’s log.
+                            if (message["lastLogIndex"].toInt() >= (int)log.size()) {
+                                if (log.size() > 0) {
+                                    // Check last log term. 
                                     if (message["lastLogTerm"].toInt() == (int)log.back().first) {
+                                        votedFor = senderPort;
                                         response["voteGranted"] = true;
                                     }
+                                } else {
+                                    votedFor = senderPort;
+                                    response["voteGranted"] = true;
                                 }
                             }
                         }
@@ -207,9 +213,26 @@ void RaftNode::receiveMessage() {
                     datastream << response;
                     sock->writeDatagram(&buf, buf.size(), senderPort);
                 }
+                // Respond to AppendEntries. 
+                if (message["type"] == "AppendEntries") {
+                    qDebug() << "RaftNode::receiveMessage: Received AppendEntries request in Follower state.";
+                
+                    // Serialize the response.
+                    QByteArray buf;
+                    QDataStream datastream(&buf, QIODevice::ReadWrite);
+                    QVariantMap response;
+
+                    response["type"] = "RequestVoteACK";
+                    response["term"] = currentTerm;
+                    response["success"] = false;
+
+                    // Return the response.
+                    datastream << response;
+                    sock->writeDatagram(&buf, buf.size(), senderPort);
+                }
+                // @TODO - Forward a message to the leader. 
                 return;
-            // Handle incoming votes. 
-            // If AppendEntries received from a new leader, convert to a follower. 
+            // Respond to Leaders and Followers.
             case CANDIDATE:
                 // Handle a vote. 
                 if (message["type"] == "RequestVoteACK") {
@@ -217,19 +240,36 @@ void RaftNode::receiveMessage() {
                     if (message["voteGranted"] == true) {
                         numVotesRcvd++;
                     }
+                    // Count election results.
+                    if (numVotesRcvd >= majority) {
+                        becomeLeader();
+                    }
+                    return;
                 }
-                // becomeFollower();
-                // becomeLeader();
-                break;
+                // Handle AppendEntries.
+                if (message["type"] == "AppendEntries") {
+                    qDebug() << "RaftNode::receiveMessage: Received AppendEntries in Candidate state.";
+                    // @TODO - If there is a new leader, convert to a Follower. 
+                    // becomeFollower();
+                    return;
+                }
+            // Respond to Candidates and Followers.
             case LEADER:
-                // becomeFollower();
-                break;
+                // @TODO - Handle an AppendEntriesACK.
+                if (message["type"] == "AppendEntriesACK") {
+                    qDebug() << "RaftNode::receiveMessage: Received AppendEntriesACK in Leader state.";
+                    return;
+                }
+                // @TODO - Handle a forwarded Message.
+                if (message["type"] == "Message") {
+                    qDebug() << "RaftNode::receiveMessage: Received Message in Leader state.";
+                    return;
+                }
+                return;
         }
 
         datagram.clear();
     }
-
-    // handleReceivedMessage(message, senderPort);
 }
 
 // void RaftNode::handleReceivedMessage(QVariantMap message, quint16 port) {
@@ -256,7 +296,7 @@ void RaftNode::receiveMessage() {
 //     }
 // }
 
-// Transition to a follower.
+// @TODO - Transition to a follower.
 void RaftNode::becomeFollower() {
     qDebug() << "RaftNode::becomeFollower";
 
@@ -279,7 +319,7 @@ void RaftNode::becomeFollower() {
     }
 }
 
-// Transition to candidate.
+// @TODO - Transition to candidate.
 void RaftNode::becomeCandidate() {
     qDebug() << "RaftNode::becomeCandidate";
 
@@ -325,9 +365,19 @@ void RaftNode::becomeLeader() {
 
     // Reinitialize the nextIndex.
     // nextIndex[] for each server, index of the next log entry to send to that server (initialized to leader last log index + 1)
+    QMap<QString, quint64>::iterator iterMatch1;
+    for (iterMatch1 = nextIndex.begin(); iterMatch1 != nextIndex.end(); ++iterMatch1) {
+        iterMatch1.value() = (int)log.size() + 1;
+    }
 
     // Reinitialize the matchIndex. 
-    // matchIndex[] for each server, index of highest log entry known to be replicated on server (initialized to 0, increases monotonically)
+    QMap<QString, quint64>::iterator iterMatch2;
+    for (iterMatch2 = matchIndex.begin(); iterMatch2 != matchIndex.end(); ++iterMatch2) {
+        iterMatch2.value() = 0;
+    }
+
+    // Start sending heartbeats.
+    startHeartbeatTimer();
 }
 
 // to be invoked by leaders to generate a message for each neighbor
@@ -457,7 +507,7 @@ void RaftNode::sendVotes() {
 
     // Generate a transaction ID.
     qsrand((uint) QDateTime::currentMSecsSinceEpoch());
-    txnID = nodeID + QString::number(qrand());
+    txnID = QString::number(nodeID) + QString::number(qrand());
     message["txnID"] = txnID;
 
     datastream << message;
@@ -466,7 +516,6 @@ void RaftNode::sendVotes() {
     for (auto const& port : knownNodes) {
         sock->writeDatagram(&buf, buf.size(), port);
     }
-
 }
 
 // @TODO - Replicate log entries.
@@ -526,7 +575,7 @@ void RaftNode::dropComms(QString targetNode) {
     }
 
     // Add the message to the chat window. 
-    QString messageText = "<span style=\"color:'red';\"><b>" + nodeID + "</b></span>: " + message;
+    QString messageText = "<span style=\"color:'red';\"><b>" + QString::number(nodeID) + "</b></span>: " + message;
     dialogWindow->addMessage(messageText);
 }
 
@@ -546,7 +595,7 @@ void RaftNode::restoreComms(QString targetNode) {
     }
 
     // Add the message to the chat window. 
-    QString messageText = "<span style=\"color:'red';\"><b>" + nodeID + "</b></span>: " + message;
+    QString messageText = "<span style=\"color:'red';\"><b>" + QString::number(nodeID) + "</b></span>: " + message;
     dialogWindow->addMessage(messageText);
 }
 
@@ -567,7 +616,7 @@ void RaftNode::getChat() {
     }
 
     // Add the message to the chat window. 
-    QString messageText = "<span style=\"color:'red';\"><b>" + nodeID + "</b></span>: " + message;
+    QString messageText = "<span style=\"color:'red';\"><b>" + QString::number(nodeID) + "</b></span>: " + message;
     dialogWindow->addMessage(messageText);
 }
 
@@ -603,7 +652,7 @@ void RaftNode::getNodes() {
     }
 
     // Add the message to the chat window. 
-    QString messageText = "<span style=\"color:'red';\"><b>" + nodeID + "</b></span>: " + message;
+    QString messageText = "<span style=\"color:'red';\"><b>" + QString::number(nodeID) + "</b></span>: " + message;
     dialogWindow->addMessage(messageText);
 }
 
@@ -682,7 +731,19 @@ void RaftNode::startPrintTimer() {
 // Helper to print current state of the node. 
 void RaftNode::auxPrint() {
     qDebug() << "RaftNode::auxPrint";
-    qDebug() << "     currentState: " << currentState;
+
+    switch (currentState) {
+        case FOLLOWER:
+            qDebug() << "     currentState: FOLLOWER";
+            break;
+        case CANDIDATE:
+            qDebug() << "     currentState: CANDIDATE";
+            break;
+        case LEADER:
+            qDebug() << "     currentState: LEADER";
+            break;
+    }
+
     qDebug() << "      currentTerm: " << currentTerm;
     qDebug() << "         votedFor: " << votedFor;
     qDebug() << "      commitIndex: " << commitIndex;
@@ -700,18 +761,16 @@ void RaftNode::auxPrint() {
         qDebug() <<  "                 " << QString::number(x);
     }
 
-    QMapIterator<QString, quint64> iterNext(nextIndex);
+    QMap<QString, quint64>::iterator iterMatch1;
     qDebug() << "        nextIndex: ";
-    while (iterNext.hasNext()) {
-        iterNext.next();
-        qDebug() <<  "                 " << iterNext.key() << ": " << iterNext.value();
+    for (iterMatch1 = nextIndex.begin(); iterMatch1 != nextIndex.end(); ++iterMatch1) {
+        qDebug() <<  "                 " << iterMatch1.key() << ": " << iterMatch1.value();
     }
 
-    QMapIterator<QString, quint64> iterMatch(matchIndex);
-    qDebug() << "        matchIndex: ";
-    while (iterMatch.hasNext()) {
-        iterMatch.next();
-        qDebug() <<  "                 " << iterMatch.key() << ": " << iterMatch.value();
+    QMap<QString, quint64>::iterator iterMatch2;
+    qDebug() << "       matchIndex: ";
+    for (iterMatch2 = matchIndex.begin(); iterMatch2 != matchIndex.end(); ++iterMatch2) {
+        qDebug() <<  "                 " << iterMatch2.key() << ": " << iterMatch2.value();
     }
 
     qDebug() << "              log: ";
@@ -726,7 +785,7 @@ void RaftNode::auxPrint() {
 }
 
 // Return node's ID.       
-QString RaftNode::getID() {
+quint16 RaftNode::getID() {
     return nodeID;
 }
 
@@ -761,7 +820,7 @@ ChatDialog::ChatDialog(NetSocket *netSock, RaftNode *raftNode) {
     setLayout(layout);
 
     // Set the layout title. 
-    QString origin = raftNode->getID();
+    QString origin = QString::number(raftNode->getID());
     setWindowTitle("Raft Chat Room - " + origin);
     qDebug() << "ChatDialog::ChatDialog: Origin is:" << origin;
 
