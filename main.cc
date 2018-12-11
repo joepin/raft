@@ -29,9 +29,6 @@ RaftNode::RaftNode(NetSocket *netSock) {
     electionTimer = new QTimer();
     connect(electionTimer, SIGNAL(timeout()), this, SLOT(electionTimeoutHandler()));
 
-    // discoveryTimer = new QTimer();
-    // connect(discoveryTimer, SIGNAL(timeout()), this, SLOT(discoveryTimeoutHandler()));
-
     // Default to a follower.
     currentState = FOLLOWER;
 }
@@ -181,9 +178,11 @@ void RaftNode::handleReceivedMessage(QVariantMap message, quint16 senderPort) {
 
     switch (message.type) {
         case "AppendEntries":
+            // needs to be handled by all followers; only sent by leaders
             handleAppendEntriesRPC(message, senderPort);
             break;
         case "AppendEntriesACK":
+            // needs to be handled by leaders only; response from followers to an RPC
             break;
     }
 
@@ -205,7 +204,7 @@ void RaftNode::handleAppendEntriesRPC(QVariantMap message, quint16 leaderPort) {
 
     if (log[message.prevLogIndex].term != message.prevLogTerm) {
         deleteAllEntriesFromIndex(message.prevLogIndex);
-        appendAllEntreisToLog(message.entries);
+        appendAllEntriesToLog(message.entries);
         if (message.leaderCommit > commitIndex) {
             commitIndex = min(message.leaderCommit, log.size());
         }
@@ -228,7 +227,7 @@ void RaftNode::sendAppendEntriesACK(quint64 term, bool result, quint16 port) {
     sock->writeDatagram(&buf, buf.size(), port);
 }
 
-void RaftNode::appendAllEntreisToLog(std::vector<LogEntry> entries) {
+void RaftNode::appendAllEntriesToLog(std::vector<LogEntry> entries) {
     for (auto entry : entries) {
         log.append(entry);
     }
@@ -281,14 +280,6 @@ void RaftNode::startProtocol() {
 
     // Begin the election timeout. 
     startElectionTimer();
-
-    // On startup, send messages to random nodes on an interval. 
-    // If the random node is the leader, the node will send back the leader's port. 
-    // If the random node is not the leader, but the node knows of the leader, the node will send back the leader's port. 
-    // If the random node is not the leader, and the node does not know of the leader, the node will send an empty response. 
-    // This discovery process continues until a leader is returned, or the election timeout is triggered. 
-    // Begin discovery.
-    // startDiscovery();
 }
 
 // Stop participating in Raft protocol.
@@ -299,9 +290,6 @@ void RaftNode::stopProtocol() {
 
     // Stop protocol elections.
     stopElectionTimer();
-
-    // Prematurely stop the discovery timeout if it's running.
-    // stopDiscovery();
 }
 
 // Drop packets from targetNode.
@@ -386,89 +374,11 @@ void RaftNode::getNodes() {
         message += "<br>Leader: " + currentLeader;
     }
 
-    // Print each known node it exists.
-    // if (knownNodes.size() != 0) {
-    //     message += "<br>Nodes:";    
-    //     for (auto const& x : knownNodes) {
-    //         message +=  "<br>" + x;
-    //     }
-    // }
-
     // Add the message to the chat window. 
     QString messageText = "<span style=\"color:'red';\"><b>" + nodeID + "</b></span>: " + message;
     dialogWindow->addMessage(messageText);
 }
 
-// Start searching neighboring nodes for an existing leader. 
-// void RaftNode::startDiscovery() {
-//     qDebug() << "RaftNode::startDiscovery: Starting discovery.";
-
-//     // @TODO - Make a function call. 
-//     QByteArray buf;
-//     QDataStream datastream(&buf, QIODevice::ReadWrite);
-//     QVariantMap message;
-
-//     // Serialize the message.
-//     message["type"] = "Message";
-//     message["entries"] = "";
-
-//     // Generate a transaction ID.
-//     qsrand((uint) QDateTime::currentMSecsSinceEpoch());
-//     txnID = nodeID + QString::number(qrand());
-//     message["txnID"] = txnID;
-
-//     datastream << message;
-
-//     // Get a random neighbor.
-//     int portIndex = rand() % neighborPorts.size();
-//     quint16 port = neighborPorts[portIndex];
-
-//     qDebug() << "Sending \"Message\" to port:" << port
-//         << ", <\"txnID\"," << message["txnID"].toString() << ">";
-
-//     // Send message to the socket.
-//     sock->writeDatagram(&buf, buf.size(), port);
-
-//     // Start the interval.
-//     discoveryTimer->start(DISCOVERY_INTERVAL);
-// }
-
-// Stop searching neighboring nodes for an existing leader. 
-// void RaftNode::stopDiscovery() {
-//     qDebug() << "RaftNode::stopDiscovery: Stopping discovery.";
-//     discoveryTimer->stop();
-// }
-
-// Handler for the discovery timeout.
-// void RaftNode::discoveryTimeoutHandler() {
-//     qDebug() << "RaftNode::discoveryTimeoutHandler: Handling the discovery timeout.";
-
-//     // @TODO - Make a function call. 
-//     QByteArray buf;
-//     QDataStream datastream(&buf, QIODevice::ReadWrite);
-//     QVariantMap message;
-
-//     // Serialize the message.
-//     message["type"] = "Message";
-//     message["entries"] = "";
-
-//     // Generate a transaction ID.
-//     qsrand((uint) QDateTime::currentMSecsSinceEpoch());
-//     txnID = nodeID + QString::number(qrand());
-//     message["txnID"] = txnID;
-
-//     datastream << message;
-
-//     // Get a random neighbor.
-//     int portIndex = rand() % neighborPorts.size();
-//     quint16 port = neighborPorts[portIndex];
-
-//     qDebug() << "Sending \"Message\" to port:" << port
-//         << ", <\"txnID\"," << message["txnID"].toString() << ">";
-
-//     // Send message to the socket.
-//     sock->writeDatagram(&buf, buf.size(), port);
-// }
 
 // Start the election timer. 
 void RaftNode::startElectionTimer() {
@@ -494,9 +404,6 @@ void RaftNode::electionTimeoutHandler() {
 
     // Stop the timer.
     stopElectionTimer();
-
-    // Stop the discovery process. 
-    // stopDiscovery();
 
     switch (currentState) {
         case FOLLOWER:
@@ -531,11 +438,6 @@ void RaftNode::auxPrint() {
     for (auto const& x : droppedNodes) {
         qDebug() <<  "                 " << x;
     }
-    
-    // qDebug() << "       knownNodes: ";
-    // for (auto const& x : knownNodes) {
-    //     qDebug() <<  "                 " << x;
-    // }
 
     qDebug() << "        nextIndex: ";
     for (auto const& x : nextIndex) {
