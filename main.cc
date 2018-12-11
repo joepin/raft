@@ -246,7 +246,7 @@ void RaftNode::handleRequestVote(QVariantMap message, quint16 port) {
             if (message["lastLogIndex"].toInt() >= (int)log.size()) {
                 if (log.size() > 0) {
                     // Check last log term. 
-                    if (message["lastLogTerm"].toInt() == (int)log.back().first) {
+                    if (message["lastLogTerm"].toInt() == (int)log.back().term) {
                         votedFor = port;
                         response["voteGranted"] = true;
                     }
@@ -378,7 +378,7 @@ QVariantMap RaftNode::createAppendEntriesRPC(quint16 port) {
     quint64 nextIndexForPort = nextIndex[portAsString];
     QVariantMap message;
 
-    QVector<QPair<quint64, QString>> entries;
+    QVector<LogEntry> entries;
 
     if (nextIndexForPort - 1 == commitIndex) {
         qDebug() << "RaftNode::createAppendEntriesRPC, logs are up to date";
@@ -386,20 +386,20 @@ QVariantMap RaftNode::createAppendEntriesRPC(quint16 port) {
         message["term"] = currentTerm;
         message["leaderId"] = nodeID;
         message["prevLogIndex"] = nextIndexForPort - 1;
-        message["prevLogTerm"] = log[nextIndexForPort - 1].first;
-        message["entries"] = QVariant::fromValue<QVector<QPair<quint64, QString>>>(entries);
+        message["prevLogTerm"] = log[nextIndexForPort - 1].term;
+        message["entries"] = QVariant::fromValue<QVector<LogEntry>>(entries);
         message["leaderCommit"] = commitIndex;
     } else {
         // need to send new entries
         qDebug() << "RaftNode::createAppendEntriesRPC, need to send new log entries";
-        QPair<quint64, QString> nextCommand = log[nextIndexForPort - 1];
+        LogEntry nextCommand = log[nextIndexForPort - 1];
         entries = getAllEntriesFromIndex(nextIndexForPort - 1);
 
         message["term"] = currentTerm;
         message["leaderId"] = nodeID;
         message["prevLogIndex"] = nextIndexForPort - 1;
-        message["prevLogTerm"] = log[nextIndexForPort - 1].first;
-        message["entries"] = QVariant::fromValue<QVector<QPair<quint64, QString>>>(entries);
+        message["prevLogTerm"] = log[nextIndexForPort - 1].term;
+        message["entries"] = QVariant::fromValue<QVector<LogEntry>>(entries);
         message["leaderCommit"] = commitIndex;
     }
     return message;
@@ -420,8 +420,8 @@ void RaftNode::handleAppendEntries(QVariantMap message, quint16 leaderPort) {
         quint64 mPrevLogIndex = message["prevLogIndex"].toUInt();
         quint64 mPrevLogTerm = message["prevLogTerm"].toUInt();
         quint64 mLeaderCommit = message["leaderCommit"].toUInt();
-        QVector<QPair<quint64, QString>> mEntries = message["entries"].value<QVector<QPair<quint64, QString>>>();
-        if (log[mPrevLogIndex].first != mPrevLogTerm) {
+        QVector<LogEntry> mEntries = message["entries"].value<QVector<LogEntry>>();
+        if (log[mPrevLogIndex].term != mPrevLogTerm) {
             deleteAllEntriesFromIndex(mPrevLogIndex);
             appendAllEntriesToLog(mEntries);
             if (mLeaderCommit > commitIndex) {
@@ -447,7 +447,7 @@ void RaftNode::sendAppendEntriesACK(quint64 term, bool result, quint16 port) {
     sock->writeDatagram(&buf, buf.size(), port);
 }
 
-void RaftNode::appendAllEntriesToLog(QVector<QPair<quint64, QString>> entries) {
+void RaftNode::appendAllEntriesToLog(QVector<LogEntry> entries) {
     for (auto entry : entries) {
         log.append(entry);
     }
@@ -460,8 +460,8 @@ void RaftNode::deleteAllEntriesFromIndex(quint64 index) {
     }
 }
 
-QVector<QPair<quint64, QString>> RaftNode::getAllEntriesFromIndex(quint64 index) {
-    QVector<QPair<quint64, QString>> entries;
+QVector<LogEntry> RaftNode::getAllEntriesFromIndex(quint64 index) {
+    QVector<LogEntry> entries;
     for (auto it = log.begin() + index; it != log.end(); ++it) {
         entries.push_back(*it);
     }
@@ -495,7 +495,7 @@ void RaftNode::sendVotes() {
         // Log index starts at 1.
         quint64 logSize = log.size(); 
         message["lastLogIndex"] = logSize;
-        message["lastLogTerm"]  = log.back().first;
+        message["lastLogTerm"]  = log.back().term;
     } else {
         // Log is empty.
         message["lastLogIndex"] = 0;
@@ -613,7 +613,7 @@ void RaftNode::getChat() {
         message += "Log: ";
         // Print each log entry.
         for (auto const& x : log) {
-            message +=  "<br>" + QString::number(x.first) + ": " + x.second;
+            message +=  "<br>" + QString::number(x.term) + ": " + x.command;
         }
     }
 
@@ -720,6 +720,11 @@ void RaftNode::restartHeartbeatTimer() {
 // @TODO - Handler for the heartbeat timeout.
 void RaftNode::heartbeatTimeoutHandler() {
     qDebug() << "RaftNode::heartbeatTimeoutHandler: Handling the heartbeat timeout.";
+    heartbeatTimer->start(heartbeatInterval);
+    for (auto port : knownNodes) {
+        QVariantMap message = createAppendEntriesRPC(port);
+        sendAppendEntriesRPC(port, message);
+    }
 }
 
 // Start the printing timer. 
@@ -777,7 +782,7 @@ void RaftNode::auxPrint() {
 
     qDebug() << "              log: ";
     for (auto const& x : log) {
-        qDebug() << "                 " << x.first << ": " << x.second;
+        qDebug() << "                 " << x.term << ": " << x.command;
     }
     
     qDebug() << "    messagesQueue: ";

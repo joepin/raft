@@ -84,6 +84,22 @@ class ChatDialog : public QDialog {
         QLineEdit *textline;
 };
 
+
+////////
+
+
+struct LogEntry {
+    quint64 term;                                /* Term when entry was received by the leader.          */
+    QString command;                             /* Command for state machine.                           */
+};
+
+
+////////
+
+
+Q_DECLARE_METATYPE(LogEntry);
+// Q_DECLARE_METATYPE(QVector<LogEntry>);
+
 class RaftNode : public QObject {
     Q_OBJECT
 
@@ -126,7 +142,7 @@ class RaftNode : public QObject {
         QMap<QString, quint64> nextIndex;        /* Per node, index of the next log entry to send to that node.                      */
         QMap<QString, quint64> matchIndex;       /* Per node, index of the highest log entry known to be replicated on that node.    */
 
-        QVector<QPair<quint64, QString>> log;               /* Log entries for the state machine.                                               */
+        QVector<LogEntry> log;               /* Log entries for the state machine.                                               */
         QVector<QString> messagesQueue;      /* Queue of messages accumulated when application is not participating in protocol. */ 
 
         void becomeFollower();                   /* Transition to the follower state.                                   */
@@ -170,9 +186,9 @@ class RaftNode : public QObject {
         void sendAppendEntriesACK(quint64 term, bool result, quint16 port);
 
         QVariantMap createAppendEntriesRPC(quint16 port); /* Helper to create an RPC message for each neighbor to be called by leaders only */
-        void appendAllEntriesToLog(QVector<QPair<quint64, QString>> entries);
+        void appendAllEntriesToLog(QVector<LogEntry> entries);
         void deleteAllEntriesFromIndex(quint64 index);
-        QVector<QPair<quint64, QString>> getAllEntriesFromIndex(quint64 index);
+        QVector<LogEntry> getAllEntriesFromIndex(quint64 index);
 };
 
 
