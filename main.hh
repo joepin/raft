@@ -131,11 +131,11 @@ class RaftNode : public QObject {
         bool protocolRunning;                    /* T/F is node is running the protocol.                 */
 
         QTimer *electionTimer;                   /* Timer that handles elections. Reset whenever heartbeat is received. */
-        QTimer *discoveryTimer;                  /* Timer that handles discovery.                                       */
+        // QTimer *discoveryTimer;                  /* Timer that handles discovery.                                       */
         quint64 electionTimeout;                 /* Election timeout value.                                             */
         quint64 heartbeatInterval;               /* Leader's heartbeat interval value.                                  */
 
-        QList<QString> knownNodes;               /* List of all known active nodes (ports).                                          */
+        // QList<QString> knownNodes;               /* List of all known active nodes (ports).                                          */
         QList<QString> droppedNodes;             /* List of dropped (ignored) nodes (ports).                                         */
         std::map<QString, quint64> nextIndex;    /* Per node, index of the next log entry to send to that node.                      */
         std::map<QString, quint64> matchIndex;   /* Per node, index of the highest log entry known to be replicated on that node.    */
@@ -162,8 +162,8 @@ class RaftNode : public QObject {
         void stopElectionTimer();                /* Stop election timeout.                               */
         void restartElectionTimer();             /* Restart (reset) the election timeout.                */
         
-        void startDiscovery();                   /* Begin the discovery process of finding new nodes.    */
-        void stopDiscovery();                    /* Terminate the discovery process.                     */
+        // void startDiscovery();                   /* Begin the discovery process of finding new nodes.    */
+        // void stopDiscovery();                    /* Terminate the discovery process.                     */
 
         void startPrintTimer();                  /* Start timer for helper printing function.            */
         void usage();                            /* Print usage message in CLI for client.               */

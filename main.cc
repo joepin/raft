@@ -29,8 +29,8 @@ RaftNode::RaftNode(NetSocket *netSock) {
     electionTimer = new QTimer();
     connect(electionTimer, SIGNAL(timeout()), this, SLOT(electionTimeoutHandler()));
 
-    discoveryTimer = new QTimer();
-    connect(discoveryTimer, SIGNAL(timeout()), this, SLOT(discoveryTimeoutHandler()));
+    // discoveryTimer = new QTimer();
+    // connect(discoveryTimer, SIGNAL(timeout()), this, SLOT(discoveryTimeoutHandler()));
 
     // Default to a follower.
     currentState = FOLLOWER;
@@ -140,6 +140,12 @@ void RaftNode::sendBacklog() {
 void RaftNode::receiveMessage() {
     qDebug() << "RaftNode::receiveMessage";
 
+    // If not participating in the protocol, drop all incoming messages. 
+    if (!protocolRunning) {
+        qDebug() << "RaftNode::receiveMessage: Dropping incoming message.";
+        return;
+    }
+
     NetSocket *sock = this->sock;
 
     // Read each datagram.
@@ -150,19 +156,7 @@ void RaftNode::receiveMessage() {
         quint16 senderPort;
         QVariantMap message;
 
-        // If not participating in the protocol, drop all incoming messages. 
-        if (!protocolRunning) {
-            qDebug() << "RaftNode::receiveMessage: Dropping incoming message.";
-            return;
-        }
-
         sock->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
-
-        // Add node to known nodes. 
-        if (!knownNodes.contains(QString::number(senderPort))) {
-            qDebug() << "RaftNode::receiveMessage: Adding new known node:" << QString::number(senderPort);
-            knownNodes.push_back(QString::number(senderPort));
-        }
 
         // If ignoring the requesting node, drop the incoming packet. 
         if (droppedNodes.contains(QString::number(senderPort))) {
@@ -174,20 +168,76 @@ void RaftNode::receiveMessage() {
 
         stream >> message;
 
-        // @TODO - Handle message type.
-        // Check if we have a messageACK. Check if it contains leader. If it does, stop discovery.
-        // If we have a heartbeat, restart the election timeout.
-
-        switch (currentState) {
-            case FOLLOWER:
-                break;
-            case CANDIDATE:
-                break;
-            case LEADER:
-                break;
-        }
+        handleReceivedMessage(message, senderPort);
 
         datagram.clear();
+    }
+}
+
+void RaftNode::handleReceivedMessage(QVariantMap message, quint16 senderPort) {
+    // @TODO - Handle message type.
+    // Check if we have a messageACK. Check if it contains leader. If it does, stop discovery.
+    // If we have a heartbeat, restart the election timeout.
+
+    switch (message.type) {
+        case "AppendEntries":
+            handleAppendEntriesRPC(message, senderPort);
+            break;
+        case "AppendEntriesACK":
+            break;
+    }
+
+    switch (currentState) {
+        case FOLLOWER:
+            break;
+        case CANDIDATE:
+            break;
+        case LEADER:
+            break;
+    }
+}
+
+void RaftNode::handleAppendEntriesRPC(QVariantMap message, quint16 leaderPort) {
+    if (message.term < currentTerm) {
+        sendAppendEntriesACK(currentTerm, false, leaderPort);
+        return;
+    }
+
+    if (log[message.prevLogIndex].term != message.prevLogTerm) {
+        deleteAllEntriesFromIndex(message.prevLogIndex);
+        appendAllEntreisToLog(message.entries);
+        if (message.leaderCommit > commitIndex) {
+            commitIndex = min(message.leaderCommit, log.size());
+        }
+        sendAppendEntriesACK(currentTerm, false, leaderPort);
+        return;
+    }
+}
+
+void RaftNode::sendAppendEntriesACK(quint64 term, bool result, quint16 port) {
+    QByteArray buf;
+    QDataStream datastream(&buf, QIODevice::ReadWrite);
+
+    QVariantMap message;
+    message["term"] = term;
+    message["success"] = result;
+
+    datastream << message;
+
+    // Send message to the socket.
+    sock->writeDatagram(&buf, buf.size(), port);
+}
+
+void RaftNode::appendAllEntreisToLog(std::vector<LogEntry> entries) {
+    for (auto entry : entries) {
+        log.append(entry);
+    }
+}
+
+void RaftNode::deleteAllEntriesFromIndex(quint64 index) {
+    auto::iterator it = log.begin() + index;
+    while (it != log.end()) {
+        it = log.erase(it);
     }
 }
 
@@ -238,7 +288,7 @@ void RaftNode::startProtocol() {
     // If the random node is not the leader, and the node does not know of the leader, the node will send an empty response. 
     // This discovery process continues until a leader is returned, or the election timeout is triggered. 
     // Begin discovery.
-    startDiscovery();
+    // startDiscovery();
 }
 
 // Stop participating in Raft protocol.
@@ -251,7 +301,7 @@ void RaftNode::stopProtocol() {
     stopElectionTimer();
 
     // Prematurely stop the discovery timeout if it's running.
-    stopDiscovery();
+    // stopDiscovery();
 }
 
 // Drop packets from targetNode.
@@ -337,12 +387,12 @@ void RaftNode::getNodes() {
     }
 
     // Print each known node it exists.
-    if (knownNodes.size() != 0) {
-        message += "<br>Nodes:";    
-        for (auto const& x : knownNodes) {
-            message +=  "<br>" + x;
-        }
-    }
+    // if (knownNodes.size() != 0) {
+    //     message += "<br>Nodes:";    
+    //     for (auto const& x : knownNodes) {
+    //         message +=  "<br>" + x;
+    //     }
+    // }
 
     // Add the message to the chat window. 
     QString messageText = "<span style=\"color:'red';\"><b>" + nodeID + "</b></span>: " + message;
@@ -350,75 +400,75 @@ void RaftNode::getNodes() {
 }
 
 // Start searching neighboring nodes for an existing leader. 
-void RaftNode::startDiscovery() {
-    qDebug() << "RaftNode::startDiscovery: Starting discovery.";
+// void RaftNode::startDiscovery() {
+//     qDebug() << "RaftNode::startDiscovery: Starting discovery.";
 
-    // @TODO - Make a function call. 
-    QByteArray buf;
-    QDataStream datastream(&buf, QIODevice::ReadWrite);
-    QVariantMap message;
+//     // @TODO - Make a function call. 
+//     QByteArray buf;
+//     QDataStream datastream(&buf, QIODevice::ReadWrite);
+//     QVariantMap message;
 
-    // Serialize the message.
-    message["type"] = "Message";
-    message["entries"] = "";
+//     // Serialize the message.
+//     message["type"] = "Message";
+//     message["entries"] = "";
 
-    // Generate a transaction ID.
-    qsrand((uint) QDateTime::currentMSecsSinceEpoch());
-    txnID = nodeID + QString::number(qrand());
-    message["txnID"] = txnID;
+//     // Generate a transaction ID.
+//     qsrand((uint) QDateTime::currentMSecsSinceEpoch());
+//     txnID = nodeID + QString::number(qrand());
+//     message["txnID"] = txnID;
 
-    datastream << message;
+//     datastream << message;
 
-    // Get a random neighbor.
-    int portIndex = rand() % neighborPorts.size();
-    quint16 port = neighborPorts[portIndex];
+//     // Get a random neighbor.
+//     int portIndex = rand() % neighborPorts.size();
+//     quint16 port = neighborPorts[portIndex];
 
-    qDebug() << "Sending \"Message\" to port:" << port
-        << ", <\"txnID\"," << message["txnID"].toString() << ">";
+//     qDebug() << "Sending \"Message\" to port:" << port
+//         << ", <\"txnID\"," << message["txnID"].toString() << ">";
 
-    // Send message to the socket.
-    sock->writeDatagram(&buf, buf.size(), port);
+//     // Send message to the socket.
+//     sock->writeDatagram(&buf, buf.size(), port);
 
-    // Start the interval.
-    discoveryTimer->start(DISCOVERY_INTERVAL);
-}
+//     // Start the interval.
+//     discoveryTimer->start(DISCOVERY_INTERVAL);
+// }
 
 // Stop searching neighboring nodes for an existing leader. 
-void RaftNode::stopDiscovery() {
-    qDebug() << "RaftNode::stopDiscovery: Stopping discovery.";
-    discoveryTimer->stop();
-}
+// void RaftNode::stopDiscovery() {
+//     qDebug() << "RaftNode::stopDiscovery: Stopping discovery.";
+//     discoveryTimer->stop();
+// }
 
 // Handler for the discovery timeout.
-void RaftNode::discoveryTimeoutHandler() {
-    qDebug() << "RaftNode::discoveryTimeoutHandler: Handling the discovery timeout.";
+// void RaftNode::discoveryTimeoutHandler() {
+//     qDebug() << "RaftNode::discoveryTimeoutHandler: Handling the discovery timeout.";
 
-    // @TODO - Make a function call. 
-    QByteArray buf;
-    QDataStream datastream(&buf, QIODevice::ReadWrite);
-    QVariantMap message;
+//     // @TODO - Make a function call. 
+//     QByteArray buf;
+//     QDataStream datastream(&buf, QIODevice::ReadWrite);
+//     QVariantMap message;
 
-    // Serialize the message.
-    message["type"] = "Message";
-    message["entries"] = "";
+//     // Serialize the message.
+//     message["type"] = "Message";
+//     message["entries"] = "";
 
-    // Generate a transaction ID.
-    qsrand((uint) QDateTime::currentMSecsSinceEpoch());
-    txnID = nodeID + QString::number(qrand());
-    message["txnID"] = txnID;
+//     // Generate a transaction ID.
+//     qsrand((uint) QDateTime::currentMSecsSinceEpoch());
+//     txnID = nodeID + QString::number(qrand());
+//     message["txnID"] = txnID;
 
-    datastream << message;
+//     datastream << message;
 
-    // Get a random neighbor.
-    int portIndex = rand() % neighborPorts.size();
-    quint16 port = neighborPorts[portIndex];
+//     // Get a random neighbor.
+//     int portIndex = rand() % neighborPorts.size();
+//     quint16 port = neighborPorts[portIndex];
 
-    qDebug() << "Sending \"Message\" to port:" << port
-        << ", <\"txnID\"," << message["txnID"].toString() << ">";
+//     qDebug() << "Sending \"Message\" to port:" << port
+//         << ", <\"txnID\"," << message["txnID"].toString() << ">";
 
-    // Send message to the socket.
-    sock->writeDatagram(&buf, buf.size(), port);
-}
+//     // Send message to the socket.
+//     sock->writeDatagram(&buf, buf.size(), port);
+// }
 
 // Start the election timer. 
 void RaftNode::startElectionTimer() {
@@ -446,7 +496,7 @@ void RaftNode::electionTimeoutHandler() {
     stopElectionTimer();
 
     // Stop the discovery process. 
-    stopDiscovery();
+    // stopDiscovery();
 
     switch (currentState) {
         case FOLLOWER:
@@ -482,10 +532,10 @@ void RaftNode::auxPrint() {
         qDebug() <<  "                 " << x;
     }
     
-    qDebug() << "       knownNodes: ";
-    for (auto const& x : knownNodes) {
-        qDebug() <<  "                 " << x;
-    }
+    // qDebug() << "       knownNodes: ";
+    // for (auto const& x : knownNodes) {
+    //     qDebug() <<  "                 " << x;
+    // }
 
     qDebug() << "        nextIndex: ";
     for (auto const& x : nextIndex) {
@@ -578,13 +628,13 @@ QString ChatDialog::getTextline() {
 // Constructor for the NetSocket class.
 // Define a range of UDP ports.
 NetSocket::NetSocket() {
-    // Pick a range of six UDP ports to try to allocate by default,
+    // Pick a range of five UDP ports to try to allocate by default,
     // computed based on my Unix user ID. This makes it trivial for 
-    // up to six P2Papp instances per user to find each other on the
+    // up to five P2Papp instances per user to find each other on the
     // same host, barring UDP port conflicts with other applications.
     // We use the range from 32768 to 49151 for this purpose.
-    myPortMin = 32768 + (getuid() % 4096) * 5;
-    myPortMax = myPortMin + 5;
+    myPortMin = 32768 + (getuid() % 4096) * 4;
+    myPortMax = myPortMin + 4;
     qDebug() << "NetSocket::NetSocket: Range of ports:" << myPortMin << "-" << myPortMax;
 }
 
