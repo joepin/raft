@@ -16,6 +16,8 @@ RaftNode::RaftNode(NetSocket *netSock) {
     // Add list of all nodes within the range to knownNodes.
     for (auto const& x : neighborPorts) {
         knownNodes.push_back(x);
+        nextIndex[QString::number(x)] = 1;
+        matchIndex[QString::number(x)] = 0;
     }
 
     // Set default values. 
@@ -64,22 +66,22 @@ void RaftNode::receiveCommand() {
     qDebug() << "RaftNode::receiveCommand: Handling command: " << command;
 
     // If user enters one of these commands, ignore any trailing words.
-    if (command == "START") {
+    if (command == "START" || command.toUpper() == "START") {
         dialogWindow->clearTextline();
         startProtocol();
         return;
     }
-    else if (command == "GET_CHAT") {
+    else if (command == "GET_CHAT" || command.toUpper() == "GET_CHAT") {
         dialogWindow->clearTextline();
         getChat();
         return;
     }
-    else if (command == "STOP") {
+    else if (command == "STOP" || command.toUpper() == "STOP") {
         dialogWindow->clearTextline();
         stopProtocol();
         return;
     }
-    else if (command == "GET_NODES") {
+    else if (command == "GET_NODES" || command.toUpper() == "GET_NODES") {
         dialogWindow->clearTextline();
         getNodes();
         return;
@@ -98,15 +100,15 @@ void RaftNode::receiveCommand() {
         return;            
     }
 
-    if (command == "MSG") {
+    if (command == "MSG" || command.toUpper() == "MSG") {
         dialogWindow->clearTextline();
         sendChat(message);
     }
-    else if (command == "DROP") {
+    else if (command == "DROP" || command.toUpper() == "DROP") {
         dialogWindow->clearTextline();
         dropComms(message);
     }
-    else if (command == "RESTORE") {
+    else if (command == "RESTORE" || command.toUpper() == "RESTORE") {
         dialogWindow->clearTextline();
         restoreComms(message);
     }
@@ -342,15 +344,13 @@ void RaftNode::becomeLeader() {
 
     // Reinitialize the nextIndex.
     // nextIndex[] for each server, index of the next log entry to send to that server (initialized to leader last log index + 1)
-    QMap<QString, quint64>::iterator iterMatch1;
-    for (iterMatch1 = nextIndex.begin(); iterMatch1 != nextIndex.end(); ++iterMatch1) {
-        iterMatch1.value() = (int)log.size() + 1;
+    for (auto indexKey : nextIndex.keys()) {
+        nextIndex[indexKey] = (int)log.size() + 1;
     }
 
     // Reinitialize the matchIndex. 
-    QMap<QString, quint64>::iterator iterMatch2;
-    for (iterMatch2 = matchIndex.begin(); iterMatch2 != matchIndex.end(); ++iterMatch2) {
-        iterMatch2.value() = 0;
+    for (auto indexKey : matchIndex.keys()) {
+        matchIndex[indexKey] = 0;
     }
 
     for (auto port : knownNodes) {
@@ -373,6 +373,7 @@ void RaftNode::sendAppendEntriesRPC(quint64 port, QVariantMap message) {
 
 // to be invoked by leaders to generate a message for each neighbor
 QVariantMap RaftNode::createAppendEntriesRPC(quint16 port) {
+    qDebug() << "RaftNode::createAppendEntriesRPC";
     QString portAsString = QString::number(port);
     quint64 nextIndexForPort = nextIndex[portAsString];
     QVariantMap message;
@@ -380,6 +381,7 @@ QVariantMap RaftNode::createAppendEntriesRPC(quint16 port) {
     QVector<QPair<quint64, QString>> entries;
 
     if (nextIndexForPort - 1 == commitIndex) {
+        qDebug() << "RaftNode::createAppendEntriesRPC, logs are up to date";
         // logs are up to date, send a heartbeat
         message["term"] = currentTerm;
         message["leaderId"] = nodeID;
@@ -389,6 +391,7 @@ QVariantMap RaftNode::createAppendEntriesRPC(quint16 port) {
         message["leaderCommit"] = commitIndex;
     } else {
         // need to send new entries
+        qDebug() << "RaftNode::createAppendEntriesRPC, need to send new log entries";
         QPair<quint64, QString> nextCommand = log[nextIndexForPort - 1];
         entries = getAllEntriesFromIndex(nextIndexForPort - 1);
 
