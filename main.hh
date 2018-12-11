@@ -17,10 +17,9 @@
 #include <unistd.h>
 #include <iostream>
 
-#define ELECTION_TIMEOUT_MIN 15000
-#define ELECTION_TIMEOUT_MAX 30000
-#define HEARTBEAT_INTERVAL   2000
-#define DISCOVERY_INTERVAL   1000
+#define ELECTION_TIMEOUT_MIN 10000
+#define ELECTION_TIMEOUT_MAX 15000
+#define HEARTBEAT_INTERVAL   1000
 
 /* Forward declaration. */
 class RaftNode;
@@ -110,41 +109,44 @@ class RaftNode : public QObject {
         void receiveMessage();                   /* Handler for when node receives a packet.             */
         void receiveCommand();                   /* Handler for when client inputs a message.            */
         void electionTimeoutHandler();           /* Handler for when the election timeout is triggered.  */
-        void discoveryTimeoutHandler();          /* Handler for when the discovery timeout is triggered. */
+        void heartbeatTimeoutHandler();          /* Handler for when the heartbeat timeout is triggered. */
         void auxPrint();                         /* Helper to print known values.                        */
 
     private:
         NetSocket *sock;
         ChatDialog *dialogWindow;
 
-        QString nodeID;                          /* Current node ID (port)                               */
         QString txnID;                           /* Transaction ID of last message sent.                 */
+        QString nodeID;                          /* Current node ID (port)                               */
         enum states currentState;                /* Current node state.                                  */
         quint64 currentTerm;                     /* Latest term the node has seen.                       */
         QString votedFor;                        /* CandidateId that received vote in current term.      */
         quint64 commitIndex;                     /* Index of highest log entry known to be committed.    */
         quint64 lastApplied;                     /* Index of highest log entry applied to state machine. */
         QString currentLeader;                   /* Port of the current leader.                          */
-        
-        QList<quint16> neighborPorts;            /* List of all neighbor ports within range.             */
+        quint64 numVotesRcvd;                    /* Number of votes node has received to become leader.  */
 
         bool protocolRunning;                    /* T/F is node is running the protocol.                 */
 
         QTimer *electionTimer;                   /* Timer that handles elections. Reset whenever heartbeat is received. */
-        // QTimer *discoveryTimer;                  /* Timer that handles discovery.                                       */
+        QTimer *heartbeatTimer;                  /* Timer that sends out heartbeats.                                    */
         quint64 electionTimeout;                 /* Election timeout value.                                             */
         quint64 heartbeatInterval;               /* Leader's heartbeat interval value.                                  */
 
-        // QList<QString> knownNodes;               /* List of all known active nodes (ports).                                          */
+        QList<quint16> knownNodes;               /* List of all known active nodes (ports).                                          */
         QList<QString> droppedNodes;             /* List of dropped (ignored) nodes (ports).                                         */
-        std::map<QString, quint64> nextIndex;    /* Per node, index of the next log entry to send to that node.                      */
-        std::map<QString, quint64> matchIndex;   /* Per node, index of the highest log entry known to be replicated on that node.    */
+        QMap<QString, quint64> nextIndex;        /* Per node, index of the next log entry to send to that node.                      */
+        QMap<QString, quint64> matchIndex;       /* Per node, index of the highest log entry known to be replicated on that node.    */
 
         std::vector<LogEntry> log;               /* Log entries for the state machine.                                               */
         std::vector<QString> messagesQueue;      /* Queue of messages accumulated when application is not participating in protocol. */ 
 
-        void requestVote();                      /* Invoked by candidates to gather votes.                              */
-        void appendEntries();                    /* Invoked by leader to replicate log entries. Also used as heartbeat. */
+        void becomeFollower();                   /* Transition to the follower state.                                   */
+        void becomeCandidate();                  /* Invoked by candidates to gather votes.                              */
+        void becomeLeader();                     /* Transition to the Leader state.                                     */
+
+        void sendVotes();                        /* Invoked by Candidate to send votes to become leader.                */
+        void appendEntries();                    /* Invoked by Leader to replicate log entries. Also used as heartbeat. */
 
         void getChat();                          /* Print current chat history (logs with consensus) of current node.   */
         void getNodes();                         /* Print all nodes, current node state, and leader ID (port).          */
@@ -162,8 +164,9 @@ class RaftNode : public QObject {
         void stopElectionTimer();                /* Stop election timeout.                               */
         void restartElectionTimer();             /* Restart (reset) the election timeout.                */
         
-        // void startDiscovery();                   /* Begin the discovery process of finding new nodes.    */
-        // void stopDiscovery();                    /* Terminate the discovery process.                     */
+        void startHeartbeatTimer();               /* Start heartbeat timeout.                            */
+        void stopHeartbeatTimer();                /* Stop heartbeat timeout.                             */
+        void restartHeartbeatTimer();             /* Restart (reset) the heartbeat timeout.              */
 
         void startPrintTimer();                  /* Start timer for helper printing function.            */
         void usage();                            /* Print usage message in CLI for client.               */
@@ -194,7 +197,7 @@ class RaftNode : public QObject {
 //     "term": "",             currentTerm, for leader to update itself
 //     "success": ""           True if follower contained entry matching prevLogIndex and prevLogTerm
 // }
-
+//
 // RequestVote message from candidates:
 // {
 //     "type": "RequestVote"
@@ -218,7 +221,7 @@ class RaftNode : public QObject {
 //     "txnID": ""             Transaction ID
 // }
 // 
-// Message ACK from the Leader:
+// Message ACK from the nodes:
 // {
 //     "type": "MessageACK"
 //     "leaderId": "",         So follower can redirect clients

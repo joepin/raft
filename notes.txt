@@ -139,3 +139,8 @@ On startup, a node will send a message to a random port.
 If the port is the leader, the port node will send back the leader port. 
 If the port is not the leader, but the port node knows of the leader, the port node will send back the leader port. 
 If the port is not the leader, and the port node does not know of the leader, do not respond. The initiator will time out and choose a new port.   
+
+
+Send message with empty heartbeat. 
+
+Timeouts when sending a message from a client to the leader? 
