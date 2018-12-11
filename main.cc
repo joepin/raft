@@ -308,36 +308,36 @@ void RaftNode::becomeCandidate() {
 
 }
 
-// to be invoked by leaders to generate a message for each neighbor
-QVariantMap RaftNode::createAppendEntriesRPC(quint16 port) {
-    quint64 nextIndexForPort = nextIndex[port];
-    QVariantMap message;
-    if (nextIndexForPort - 1 == commitIndex) {
-        // logs are up to date, send a heartbeat
-        message["term"] = currentTerm;
-        message["leaderId"] = nodeID;
-        message["prevLogIndex"] = nextIndexForPort - 1;
-        message["prevLogTerm"] = log[nextIndexForPort - 1].term;
-        message["entries"] = std::vector<LogEntry>();
-        message["leaderCommit"] = commitIndex;
-    } else {
-        // need to send new entries
-        message["term"] = currentTerm;
-        message["leaderId"] = nodeID;
-        message["prevLogIndex"] = nextIndexForPort - 1;
-        message["prevLogTerm"] = log[nextIndexForPort - 1].term;
-        message["entries"] = getAllEntriesFromIndex(nextIndexForPort - 1);
-        message["leaderCommit"] = commitIndex;
-    }
-    return message;
-}
+// // to be invoked by leaders to generate a message for each neighbor
+// QVariantMap RaftNode::createAppendEntriesRPC(quint16 port) {
+//     quint64 nextIndexForPort = nextIndex[port];
+//     QVariantMap message;
+//     if (nextIndexForPort - 1 == commitIndex) {
+//         // logs are up to date, send a heartbeat
+//         message["term"] = currentTerm;
+//         message["leaderId"] = nodeID;
+//         message["prevLogIndex"] = nextIndexForPort - 1;
+//         message["prevLogTerm"] = log[nextIndexForPort - 1].term;
+//         message["entries"] = std::vector<LogEntry>();
+//         message["leaderCommit"] = commitIndex;
+//     } else {
+//         // need to send new entries
+//         message["term"] = currentTerm;
+//         message["leaderId"] = nodeID;
+//         message["prevLogIndex"] = nextIndexForPort - 1;
+//         message["prevLogTerm"] = log[nextIndexForPort - 1].term;
+//         message["entries"] = getAllEntriesFromIndex(nextIndexForPort - 1);
+//         message["leaderCommit"] = commitIndex;
+//     }
+//     return message;
+// }
 
-void RaftNode::handleAppendEntriesRPC(QVariantMap message, quint16 leaderPort) {
-    if (message.term < currentTerm) {
-        sendAppendEntriesACK(currentTerm, false, leaderPort);
-        return;
-    }
-}
+// void RaftNode::handleAppendEntriesRPC(QVariantMap message, quint16 leaderPort) {
+//     if (message.term < currentTerm) {
+//         sendAppendEntriesACK(currentTerm, false, leaderPort);
+//         return;
+//     }
+// }
 
 // @TODO - Transition to leader.
 void RaftNode::becomeLeader() {
