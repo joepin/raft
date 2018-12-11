@@ -146,6 +146,12 @@ void RaftNode::sendBacklog() {
 void RaftNode::receiveMessage() {
     qDebug() << "RaftNode::receiveMessage";
 
+    // If not participating in the protocol, drop all incoming messages. 
+    if (!protocolRunning) {
+        qDebug() << "RaftNode::receiveMessage: Dropping incoming message.";
+        return;
+    }
+
     NetSocket *sock = this->sock;
 
     // Read each datagram.
@@ -155,12 +161,6 @@ void RaftNode::receiveMessage() {
         QHostAddress sender;
         quint16 senderPort;
         QVariantMap message;
-
-        // If not participating in the protocol, drop all incoming messages. 
-        if (!protocolRunning) {
-            qDebug() << "RaftNode::receiveMessage: Dropping incoming message.";
-            return;
-        }
 
         sock->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
 
@@ -232,9 +232,36 @@ void RaftNode::receiveMessage() {
                 break;
         }
 
+        // handleReceivedMessage(message, senderPort);
+
         datagram.clear();
     }
 }
+
+// void RaftNode::handleReceivedMessage(QVariantMap message, quint16 senderPort) {
+//     // @TODO - Handle message type.
+//     // Check if we have a messageACK. Check if it contains leader. If it does, stop discovery.
+//     // If we have a heartbeat, restart the election timeout.
+
+//     switch (message.type) {
+//         case "AppendEntries":
+//             // needs to be handled by all followers; only sent by leaders
+//             handleAppendEntriesRPC(message, senderPort);
+//             break;
+//         case "AppendEntriesACK":
+//             // needs to be handled by leaders only; response from followers to an RPC
+//             break;
+//     }
+
+//     switch (currentState) {
+//         case FOLLOWER:
+//             break;
+//         case CANDIDATE:
+//             break;
+//         case LEADER:
+//             break;
+//     }
+// }
 
 // Transition to a follower.
 void RaftNode::becomeFollower() {
@@ -246,14 +273,14 @@ void RaftNode::becomeFollower() {
 
     switch (currentState) {
         case FOLLOWER:
-            qDebug() << "RaftNode::becomeLeader: Internal error - transitioning to Follower when state is Follower.";
+            qDebug() << "RaftNode::becomeFollower: Internal error - transitioning to Follower when state is Follower.";
             break;
         case CANDIDATE:
-            qDebug() << "RaftNode::becomeLeader: Transitioning to Follower from Candidate.";
+            qDebug() << "RaftNode::becomeFollower: Transitioning to Follower from Candidate.";
             currentState = FOLLOWER;
             break;
         case LEADER:
-            qDebug() << "RaftNode::becomeLeader: Transitioning to Follower from Leader.";
+            qDebug() << "RaftNode::becomeFollower: Transitioning to Follower from Leader.";
             currentState = FOLLOWER;
             break;
     }
@@ -264,20 +291,22 @@ void RaftNode::becomeCandidate() {
     qDebug() << "RaftNode::becomeCandidate";
 
     // Sanity check that timeouts are not running. 
+    stopElectionTimer();
     stopHeartbeatTimer();
 
     switch (currentState) {
         case FOLLOWER:
+            qDebug() << "RaftNode::becomeCandidate: Transitioning to Candidate from Follower.";
             currentState = CANDIDATE;
-            numVotesRcvd = 0;
             break;
         case CANDIDATE:
-            qDebug() << "RaftNode::becomeCandidate: Internal error - transitioning to candidate when state is Candidate.";
+            qDebug() << "RaftNode::becomeCandidate: Internal error - transitioning to Candidate when state is Candidate.";
             break;
         case LEADER:
-            qDebug() << "RaftNode::becomeCandidate: Internal error - transitioning to candidate when state is Leader.";
+            qDebug() << "RaftNode::becomeCandidate: Internal error - transitioning to Candidate when state is Leader.";
             break;
     }
+
 }
 
 // @TODO - Transition to leader.
@@ -286,17 +315,19 @@ void RaftNode::becomeLeader() {
 
     // Sanity check that timeouts are not running. 
     stopElectionTimer();
+    stopHeartbeatTimer();
 
     switch (currentState) {
         case FOLLOWER:
             qDebug() << "RaftNode::becomeLeader: Internal error - transitioning to Leader when state is Follower.";
             return;
         case CANDIDATE:
+            qDebug() << "RaftNode::becomeLeader: Transitioning to Leader from Candidate.";
             currentState = LEADER;
             break;
         case LEADER:
             qDebug() << "RaftNode::becomeLeader: Internal error - transitioning to Leader when state is Leader.";
-            return;
+            break;
     }
 
     // Reinitialize the nextIndex.
@@ -305,6 +336,50 @@ void RaftNode::becomeLeader() {
     // Reinitialize the matchIndex. 
     // matchIndex[] for each server, index of highest log entry known to be replicated on server (initialized to 0, increases monotonically)
 }
+
+// void RaftNode::handleAppendEntriesRPC(QVariantMap message, quint16 leaderPort) {
+//     if (message.term < currentTerm) {
+//         sendAppendEntriesACK(currentTerm, false, leaderPort);
+//         return;
+//     }
+
+//     if (log[message.prevLogIndex].term != message.prevLogTerm) {
+//         deleteAllEntriesFromIndex(message.prevLogIndex);
+//         appendAllEntriesToLog(message.entries);
+//         if (message.leaderCommit > commitIndex) {
+//             commitIndex = min(message.leaderCommit, log.size());
+//         }
+//         sendAppendEntriesACK(currentTerm, false, leaderPort);
+//         return;
+//     }
+// }
+
+// void RaftNode::sendAppendEntriesACK(quint64 term, bool result, quint16 port) {
+//     QByteArray buf;
+//     QDataStream datastream(&buf, QIODevice::ReadWrite);
+
+//     QVariantMap message;
+//     message["term"] = term;
+//     message["success"] = result;
+
+//     datastream << message;
+
+//     // Send message to the socket.
+//     sock->writeDatagram(&buf, buf.size(), port);
+// }
+
+// void RaftNode::appendAllEntriesToLog(std::vector<LogEntry> entries) {
+//     for (auto entry : entries) {
+//         log.append(entry);
+//     }
+// }
+
+// void RaftNode::deleteAllEntriesFromIndex(quint64 index) {
+//     auto::iterator it = log.begin() + index;
+//     while (it != log.end()) {
+//         it = log.erase(it);
+//     }
+// }
 
 // Send votes for election.
 void RaftNode::sendVotes() {
