@@ -376,8 +376,22 @@ void RaftNode::becomeLeader() {
         iterMatch2.value() = 0;
     }
 
+    for (auto port : knownNodes) {
+        QVariantMap message = createAppendEntriesRPC(port);
+        sendAppendEntriesRPC(port, message);
+    }
     // Start sending heartbeats.
     startHeartbeatTimer();
+}
+
+void RaftNode::sendAppendEntriesRPC(quint64 port, QVariantMap message) {
+    QByteArray buf;
+    QDataStream datastream(&buf, QIODevice::ReadWrite);
+
+    datastream << message;
+
+    // Send message to the socket.
+    sock->writeDatagram(&buf, buf.size(), port);
 }
 
 // to be invoked by leaders to generate a message for each neighbor
