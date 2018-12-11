@@ -146,8 +146,6 @@ void RaftNode::sendBacklog() {
 void RaftNode::receiveMessage() {
     qDebug() << "RaftNode::receiveMessage";
 
-    NetSocket *sock = this->sock;
-
     // Read each datagram.
     while (sock->hasPendingDatagrams()) {
         QByteArray datagram;
@@ -158,75 +156,77 @@ void RaftNode::receiveMessage() {
 
         sock->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
 
+        // If not participating in the protocol, drop all incoming messages. 
+        if (!protocolRunning) {
+            qDebug() << "RaftNode::receiveMessage: Dropping incoming message.";
+            return;
+        }
+
+        // If ignoring the requesting node, drop the incoming packet. 
+        if (droppedNodes.contains(QString::number(senderPort))) {
+            qDebug() << "RaftNode::receiveMessage: Dropping incoming message.";
+            return;
+        }
+
         QDataStream stream(&datagram, QIODevice::ReadOnly);
 
         stream >> message;
 
-        datagram.clear();
-    }
+        switch (currentState) {
+            // Respond to RPC's from Candidates and Leaders. 
+            case FOLLOWER:
+                // Respond to a vote request. 
+                if (message["type"] == "RequestVote") {
+                    qDebug() << "RaftNode::receiveMessage: Received vote request in Follower state.";
+                
+                    // Serialize the response.
+                    QByteArray buf;
+                    QDataStream datastream(&buf, QIODevice::ReadWrite);
+                    QVariantMap response;
 
-    // If not participating in the protocol, drop all incoming messages. 
-    if (!protocolRunning) {
-        qDebug() << "RaftNode::receiveMessage: Dropping incoming message.";
-        return;
-    }
+                    response["type"] = "RequestVoteACK";
+                    response["term"] = currentTerm;
+                    response["voteGranted"] = false;
 
-    // If ignoring the requesting node, drop the incoming packet. 
-    if (droppedNodes.contains(QString::number(senderPort))) {
-        qDebug() << "RaftNode::receiveMessage: Dropping incoming message.";
-        return;
-    }
-
-    switch (currentState) {
-        // Respond to RPC's from Candidates and Leaders. 
-        case FOLLOWER:
-            // Respond to a vote request. 
-            if (message["type"] == "RequestVote") {
-                qDebug() << "RaftNode::receiveMessage: Received vote request in Follower state.";
-            
-                // Serialize the response.
-                QByteArray buf;
-                QDataStream datastream(&buf, QIODevice::ReadWrite);
-                QVariantMap response;
-
-                response["type"] = "RequestVoteACK";
-                response["term"] = currentTerm;
-                response["voteGranted"] = false;
-
-                // If Candidate is in the same or newer term:
-                if (message["term"] >= currentTerm) {
-                    // If votedFor is null or candidateId
-                    if (votedFor == "" || votedFor == message["candidateId"]) {
-                        // And candidate’s log is at least as up-to-date as receiver’s log
-                        if (message["lastLogIndex"].toInt() >= (int)log.size()) {
-                            if (message["lastLogTerm"].toInt() == (int)log.back().term) {
-                                response["voteGranted"] = true;
+                    // If Candidate is in the same or newer term:
+                    if (message["term"] >= currentTerm) {
+                        // If votedFor is null or candidateId
+                        if (votedFor == "" || votedFor == message["candidateId"]) {
+                            // And candidate’s log is at least as up-to-date as receiver’s log
+                            if (log.size() > 0) {
+                                if (message["lastLogIndex"].toInt() >= (int)log.size()) {
+                                    if (message["lastLogTerm"].toInt() == (int)log.back().term) {
+                                        response["voteGranted"] = true;
+                                    }
+                                }
                             }
                         }
                     }
-                }
 
-                // Return the response.
-                datastream << response;
-                sock->writeDatagram(&buf, buf.size(), senderPort);
-            }
-            return;
-        // Handle incoming votes. 
-        // If AppendEntries received from a new leader, convert to a follower. 
-        case CANDIDATE:
-            // Handle a vote. 
-            if (message["type"] == "RequestVoteACK") {
-                qDebug() << "RaftNode::receiveMessage: Received vote in Candidate state.";
-                if (message["voteGranted"] == true) {
-                    numVotesRcvd++;
+                    // Return the response.
+                    datastream << response;
+                    sock->writeDatagram(&buf, buf.size(), senderPort);
                 }
-            }
-            // becomeFollower();
-            // becomeLeader();
-            break;
-        case LEADER:
-            // becomeFollower();
-            break;
+                return;
+            // Handle incoming votes. 
+            // If AppendEntries received from a new leader, convert to a follower. 
+            case CANDIDATE:
+                // Handle a vote. 
+                if (message["type"] == "RequestVoteACK") {
+                    qDebug() << "RaftNode::receiveMessage: Received vote in Candidate state.";
+                    if (message["voteGranted"] == true) {
+                        numVotesRcvd++;
+                    }
+                }
+                // becomeFollower();
+                // becomeLeader();
+                break;
+            case LEADER:
+                // becomeFollower();
+                break;
+        }
+
+        datagram.clear();
     }
 
     // handleReceivedMessage(message, senderPort);
