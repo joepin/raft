@@ -102,7 +102,7 @@ class RaftNode : public QObject {
 
     public:
         RaftNode(NetSocket *);
-        QString getID();
+        quint16 getID();
         void setDialog(ChatDialog *);
 
     public slots:
@@ -117,14 +117,15 @@ class RaftNode : public QObject {
         ChatDialog *dialogWindow;
 
         QString txnID;                           /* Transaction ID of last message sent.                 */
-        QString nodeID;                          /* Current node ID (port)                               */
+        quint16 nodeID;                          /* Current node ID (port)                               */
         enum states currentState;                /* Current node state.                                  */
         quint64 currentTerm;                     /* Latest term the node has seen.                       */
-        QString votedFor;                        /* CandidateId that received vote in current term.      */
+        quint16 votedFor;                        /* CandidateId that received vote in current term.      */
         quint64 commitIndex;                     /* Index of highest log entry known to be committed.    */
         quint64 lastApplied;                     /* Index of highest log entry applied to state machine. */
         QString currentLeader;                   /* Port of the current leader.                          */
         quint64 numVotesRcvd;                    /* Number of votes node has received to become leader.  */
+        quint64 majority;                        /* Majority needed for election.                        */
 
         bool protocolRunning;                    /* T/F is node is running the protocol.                 */
 
