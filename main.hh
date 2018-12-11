@@ -84,19 +84,6 @@ class ChatDialog : public QDialog {
         QLineEdit *textline;
 };
 
-
-////////
-
-
-struct LogEntry {
-    quint64 term;                                /* Term when entry was received by the leader.          */
-    QString command;                             /* Command for state machine.                           */
-};
-
-
-////////
-
-
 class RaftNode : public QObject {
     Q_OBJECT
 
@@ -138,8 +125,8 @@ class RaftNode : public QObject {
         QMap<QString, quint64> nextIndex;        /* Per node, index of the next log entry to send to that node.                      */
         QMap<QString, quint64> matchIndex;       /* Per node, index of the highest log entry known to be replicated on that node.    */
 
-        std::vector<LogEntry> log;               /* Log entries for the state machine.                                               */
-        std::vector<QString> messagesQueue;      /* Queue of messages accumulated when application is not participating in protocol. */ 
+        QVector<QPair<quint64, QString>> log;               /* Log entries for the state machine.                                               */
+        QVector<QString> messagesQueue;      /* Queue of messages accumulated when application is not participating in protocol. */ 
 
         void becomeFollower();                   /* Transition to the follower state.                                   */
         void becomeCandidate();                  /* Invoked by candidates to gather votes.                              */
@@ -170,7 +157,12 @@ class RaftNode : public QObject {
 
         void startPrintTimer();                  /* Start timer for helper printing function.            */
         void usage();                            /* Print usage message in CLI for client.               */
-
+        QVariantMap createAppendEntriesRPC(quint16 port); /* Helper to create an RPC message for each neighbor to be called by leaders only */
+        void handleAppendEntriesRPC(QVariantMap message, quint16 leaderPort);
+        void sendAppendEntriesACK(quint64 term, bool result, quint16 port);
+        void appendAllEntriesToLog(QVector<QPair<quint64, QString>> entries);
+        void deleteAllEntriesFromIndex(quint64 index);
+        QVector<QPair<quint64, QString>> getAllEntriesFromIndex(quint64 index);
 };
 
 
