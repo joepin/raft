@@ -209,6 +209,7 @@ void RaftNode::receiveMessage() {
                         }
                     }
 
+                    // Return the response.
                     datastream << response;
                     sock->writeDatagram(&buf, buf.size(), senderPort);
                 }

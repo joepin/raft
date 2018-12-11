@@ -17,8 +17,8 @@
 #include <unistd.h>
 #include <iostream>
 
-#define ELECTION_TIMEOUT_MIN 2000
-#define ELECTION_TIMEOUT_MAX 3000
+#define ELECTION_TIMEOUT_MIN 10000
+#define ELECTION_TIMEOUT_MAX 15000
 #define HEARTBEAT_INTERVAL   1000
 
 /* Forward declaration. */
