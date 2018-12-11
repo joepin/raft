@@ -158,9 +158,18 @@ class RaftNode : public QObject {
 
         void startPrintTimer();                  /* Start timer for helper printing function.            */
         void usage();                            /* Print usage message in CLI for client.               */
-        QVariantMap createAppendEntriesRPC(quint16 port); /* Helper to create an RPC message for each neighbor to be called by leaders only */
-        void handleAppendEntriesRPC(QVariantMap message, quint16 leaderPort);
+
+        void handleReceivedMessage(QVariantMap message, quint16 port);
+        
+        void handleRequestVote(QVariantMap message, quint16 port);
+        void handleRequestVoteACK(QVariantMap message, quint16 port);
+
+        void handleAppendEntries(QVariantMap message, quint16 leaderPort);
+        void handleAppendEntriesACK(QVariantMap message, quint16 senderPort);
+        void sendAppendEntriesRPC(quint64 port, QVariantMap message);
         void sendAppendEntriesACK(quint64 term, bool result, quint16 port);
+
+        QVariantMap createAppendEntriesRPC(quint16 port); /* Helper to create an RPC message for each neighbor to be called by leaders only */
         void appendAllEntriesToLog(QVector<QPair<quint64, QString>> entries);
         void deleteAllEntriesFromIndex(quint64 index);
         QVector<QPair<quint64, QString>> getAllEntriesFromIndex(quint64 index);

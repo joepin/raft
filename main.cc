@@ -173,128 +173,105 @@ void RaftNode::receiveMessage() {
 
         stream >> message;
 
-        switch (currentState) {
-            // Respond to RPC's from Candidates and Leaders. 
-            case FOLLOWER:
-                // Respond to a vote request. 
-                if (message["type"] == "RequestVote") {
-                    qDebug() << "RaftNode::receiveMessage: Received vote request in Follower state.";
-                
-                    // Serialize the response.
-                    QByteArray buf;
-                    QDataStream datastream(&buf, QIODevice::ReadWrite);
-                    QVariantMap response;
-
-                    response["type"] = "RequestVoteACK";
-                    response["term"] = currentTerm;
-                    response["voteGranted"] = false;
-
-                    // If Candidate is in the same or newer term:
-                    if (message["term"] >= currentTerm) {
-                        // If votedFor is null or candidateId.
-                        if (votedFor == 0 || votedFor == message["candidateId"]) {
-                            // And candidate’s log is at least as up-to-date as receiver’s log.
-                            if (message["lastLogIndex"].toInt() >= (int)log.size()) {
-                                if (log.size() > 0) {
-                                    // Check last log term. 
-                                    if (message["lastLogTerm"].toInt() == (int)log.back().first) {
-                                        votedFor = senderPort;
-                                        response["voteGranted"] = true;
-                                    }
-                                } else {
-                                    votedFor = senderPort;
-                                    response["voteGranted"] = true;
-                                }
-                            }
-                        }
-                    }
-
-                    // Return the response.
-                    datastream << response;
-                    sock->writeDatagram(&buf, buf.size(), senderPort);
-                }
-                // Respond to AppendEntries. 
-                if (message["type"] == "AppendEntries") {
-                    qDebug() << "RaftNode::receiveMessage: Received AppendEntries request in Follower state.";
-                
-                    // Serialize the response.
-                    QByteArray buf;
-                    QDataStream datastream(&buf, QIODevice::ReadWrite);
-                    QVariantMap response;
-
-                    response["type"] = "RequestVoteACK";
-                    response["term"] = currentTerm;
-                    response["success"] = false;
-
-                    // Return the response.
-                    datastream << response;
-                    sock->writeDatagram(&buf, buf.size(), senderPort);
-                }
-                // @TODO - Forward a message to the leader. 
-                return;
-            // Respond to Leaders and Followers.
-            case CANDIDATE:
-                // Handle a vote. 
-                if (message["type"] == "RequestVoteACK") {
-                    qDebug() << "RaftNode::receiveMessage: Received vote in Candidate state.";
-                    if (message["voteGranted"] == true) {
-                        numVotesRcvd++;
-                    }
-                    // Count election results.
-                    if (numVotesRcvd >= majority) {
-                        becomeLeader();
-                    }
-                    return;
-                }
-                // Handle AppendEntries.
-                if (message["type"] == "AppendEntries") {
-                    qDebug() << "RaftNode::receiveMessage: Received AppendEntries in Candidate state.";
-                    // @TODO - If there is a new leader, convert to a Follower. 
-                    // becomeFollower();
-                    return;
-                }
-            // Respond to Candidates and Followers.
-            case LEADER:
-                // @TODO - Handle an AppendEntriesACK.
-                if (message["type"] == "AppendEntriesACK") {
-                    qDebug() << "RaftNode::receiveMessage: Received AppendEntriesACK in Leader state.";
-                    return;
-                }
-                // @TODO - Handle a forwarded Message.
-                if (message["type"] == "Message") {
-                    qDebug() << "RaftNode::receiveMessage: Received Message in Leader state.";
-                    return;
-                }
-                return;
-        }
+        handleReceivedMessage(message, senderPort);
 
         datagram.clear();
     }
 }
 
-// void RaftNode::handleReceivedMessage(QVariantMap message, quint16 port) {
-//     // @TODO - Handle message type.
-//     // Check if we have a messageACK. Check if it contains leader. If it does, stop discovery.
-//     // If we have a heartbeat, restart the election timeout.
+void RaftNode::handleReceivedMessage(QVariantMap message, quint16 port) {
+    // @TODO - Handle message type.
+    // Check if we have a messageACK. Check if it contains leader. If it does, stop discovery.
+    // If we have a heartbeat, restart the election timeout.
 
-//     switch (message.type) {
-//         case "AppendEntries":
-//             // needs to be handled by all followers; only sent by leaders
-//             handleAppendEntriesRPC(message, port);
-//             break;
-//         case "AppendEntriesACK":
-//             // needs to be handled by leaders only; response from followers to an RPC
-//             handleAppendEntriesACK(message, port);
+    switch (currentState) {
+        // Respond to RPC's from Candidates and Leaders. 
+        case FOLLOWER:
+            // Respond to a vote request. 
+            if (message["type"] == "RequestVote") {
+                handleRequestVote(message, port);
+            }
+            // Respond to AppendEntries. 
+            if (message["type"] == "AppendEntries") {
+                handleAppendEntries(message, port);
+            }
+            // @TODO - Forward a message to the leader. 
+            return;
+        // Respond to Leaders and Followers.
+        case CANDIDATE:
+            // Handle a vote. 
+            if (message["type"] == "RequestVoteACK") {
+                handleRequestVoteACK(message, port);
+            }
+            // Handle AppendEntries.
+            if (message["type"] == "AppendEntries") {
+                handleAppendEntries(message, port);
+            }
+        // Respond to Candidates and Followers.
+        case LEADER:
+            // @TODO - Handle an AppendEntriesACK.
+            if (message["type"] == "AppendEntriesACK") {
+                qDebug() << "RaftNode::receiveMessage: Received AppendEntriesACK in Leader state.";
+                handleAppendEntriesACK(message, port);
+                return;
+            }
+            // @TODO - Handle a forwarded Message.
+            if (message["type"] == "Message") {
+                qDebug() << "RaftNode::receiveMessage: Received Message in Leader state.";
+                return;
+            }
+            return;
+    }
+}
 
-//     switch (currentState) {
-//         case FOLLOWER:
-//             break;
-//         case CANDIDATE:
-//             break;
-//         case LEADER:
-//             break;
-//     }
-// }
+void RaftNode::handleRequestVote(QVariantMap message, quint16 port) {
+    qDebug() << "RaftNode::handleRequestVote: Received vote request in Follower state.";
+
+    // Serialize the response.
+    QByteArray buf;
+    QDataStream datastream(&buf, QIODevice::ReadWrite);
+    QVariantMap response;
+
+    response["type"] = "RequestVoteACK";
+    response["term"] = currentTerm;
+    response["voteGranted"] = false;
+
+    // If Candidate is in the same or newer term:
+    if (message["term"] >= currentTerm) {
+        // If votedFor is null or candidateId.
+        if (votedFor == 0 || votedFor == message["candidateId"]) {
+            // And candidate’s log is at least as up-to-date as receiver’s log.
+            if (message["lastLogIndex"].toInt() >= (int)log.size()) {
+                if (log.size() > 0) {
+                    // Check last log term. 
+                    if (message["lastLogTerm"].toInt() == (int)log.back().first) {
+                        votedFor = port;
+                        response["voteGranted"] = true;
+                    }
+                } else {
+                    votedFor = port;
+                    response["voteGranted"] = true;
+                }
+            }
+        }
+    }
+
+    // Return the response.
+    datastream << response;
+    sock->writeDatagram(&buf, buf.size(), port);
+}
+
+void RaftNode::handleRequestVoteACK(QVariantMap message, quint16 port) {
+    qDebug() << "RaftNode::handleRequestVoteACK: Received vote in Candidate state.";
+    if (message["voteGranted"] == true) {
+        numVotesRcvd++;
+    }
+    // Count election results.
+    if (numVotesRcvd >= majority) {
+        becomeLeader();
+    }
+    return;
+}
 
 // @TODO - Transition to a follower.
 void RaftNode::becomeFollower() {
@@ -425,23 +402,31 @@ QVariantMap RaftNode::createAppendEntriesRPC(quint16 port) {
     return message;
 }
 
-void RaftNode::handleAppendEntriesRPC(QVariantMap message, quint16 leaderPort) {
-    if (message["term"] < currentTerm) {
-        sendAppendEntriesACK(currentTerm, false, leaderPort);
+void RaftNode::handleAppendEntries(QVariantMap message, quint16 leaderPort) {
+    if (currentState == CANDIDATE) {
+        qDebug() << "RaftNode::receiveMessage: Received AppendEntries in Candidate state.";
+        // @TODO - If there is a new leader, convert to a Follower. 
+        // becomeFollower();
         return;
     }
-    quint64 mPrevLogIndex = message["prevLogIndex"].toUInt();
-    quint64 mPrevLogTerm = message["prevLogTerm"].toUInt();
-    quint64 mLeaderCommit = message["leaderCommit"].toUInt();
-    QVector<QPair<quint64, QString>> mEntries = message["entries"].value<QVector<QPair<quint64, QString>>>();
-    if (log[mPrevLogIndex].first != mPrevLogTerm) {
-        deleteAllEntriesFromIndex(mPrevLogIndex);
-        appendAllEntriesToLog(mEntries);
-        if (mLeaderCommit > commitIndex) {
-            commitIndex = mLeaderCommit > (quint64) log.size() ? mLeaderCommit : (quint64) log.size();
+    if (currentState == FOLLOWER) {
+        if (message["term"] < currentTerm) {
+            sendAppendEntriesACK(currentTerm, false, leaderPort);
+            return;
         }
-        sendAppendEntriesACK(currentTerm, false, leaderPort);
-        return;
+        quint64 mPrevLogIndex = message["prevLogIndex"].toUInt();
+        quint64 mPrevLogTerm = message["prevLogTerm"].toUInt();
+        quint64 mLeaderCommit = message["leaderCommit"].toUInt();
+        QVector<QPair<quint64, QString>> mEntries = message["entries"].value<QVector<QPair<quint64, QString>>>();
+        if (log[mPrevLogIndex].first != mPrevLogTerm) {
+            deleteAllEntriesFromIndex(mPrevLogIndex);
+            appendAllEntriesToLog(mEntries);
+            if (mLeaderCommit > commitIndex) {
+                commitIndex = mLeaderCommit > (quint64) log.size() ? mLeaderCommit : (quint64) log.size();
+            }
+            sendAppendEntriesACK(currentTerm, false, leaderPort);
+            return;
+        }
     }
 }
 
@@ -480,9 +465,9 @@ QVector<QPair<quint64, QString>> RaftNode::getAllEntriesFromIndex(quint64 index)
     return entries;
 }
 
-// void RaftNode::handleAppendEntriesACK(QVariantMap message, quint16 senderPort) {
+void RaftNode::handleAppendEntriesACK(QVariantMap message, quint16 senderPort) {
 
-// }
+}
 
 // Send votes for election.
 void RaftNode::sendVotes() {
